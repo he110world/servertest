@@ -1,3 +1,17 @@
+var cluster = require('cluster');
+var numCPUs = require('os').cpus().length;
+
+if (cluster.isMaster) {
+	// fork workers
+	for (var i=0; i<numCPUs; i++) {
+		cluster.fork();
+	}
+
+	cluster.on('exit', function(worker, code, signal) {
+		console.log('worker ' + worker.process.pid + 'exit');
+	});
+} else {
+
 var redis = require('redis');
 var userpub = redis.createClient();
 var usersub = redis.createClient();
@@ -127,15 +141,7 @@ function checkSession (session, cb) {
 	}
 }
 
-function onRoomMsg (ws, msg) {
-	// 已经在房间里？
-	redisclient.get('inroom:'+
-		case 'createroom':
-		case 'enterroom':
-		case 'findroom':
-		case 'quitroom':
-
-}
+var MAX_ROOM_SIZE = 4;
 
 wss.on('connection', function(ws) {
 	ws.on('open', function() {
@@ -169,10 +175,11 @@ wss.on('connection', function(ws) {
 		case 'echo': 
 			response(ws, 'echo', msg.data, msg.id);
 			break;
-		case 'createroom':
-		case 'enterroom':
-		case 'findroom':
+		case 'makeroom':
+		case 'joinroom':
+		case 'randroom':
 		case 'quitroom':
+		case 'chat':
 			checkSession(msg.session, function(err, user){
 				if (err) {
 					responseErr(ws, msg.cmd, 'session_err', msg.id);
@@ -182,27 +189,55 @@ wss.on('connection', function(ws) {
 							responseErr(ws, msg.cmd, 'db_err', msg.id);
 						} else if (roomid) {	// room exists
 							if (msg.cmd=='quitroom') {
+							} else if (msg.cmd=='chat') {
 							} else {
 								responseErr(ws, msg.cmd, 'not_in_room_err', msg.id);
 							}
 						} else {	// room does not exist
-							if (msg.cmd=='createroom') {
+							if (msg.cmd=='makeroom') {
 								redisclient.incr('next_room_id', function(err, newid){
 									if (err || !newid) {
 										responseErr(ws, msg.cmd, 'db_err', msg.id);
 									} else {
-										redisclient.set('roomid:'+user, newid, function(err, data){
+										redisclient
+										.multi()
+										.set('roomid:'+user, newid)
+										.lpush('room:'+newid, user)
+										.exec(function(err, data){
 											if (err) {
 												responseErr(ws, msg.cmd, 'db_err', msg.id);
 											} else {
-												responseData(ws, msg.cmd, {room:{roomid:newid}}, msg.id);
+												responseData(ws, msg.cmd, {room:{roomid:newid, users:[user]}}, msg.id);
 											}
 										});
 									}
 								});
-							} else if (msg.cmd=='enterroom') {
-								// is room full?
-							} else if (msg.cmd=='findroom'){
+							} else if (msg.cmd=='joinroom') {
+								try {
+									var roomid = msg.data.roomid;
+									redisclient.lpush('room:'+roomid, user, function(err,count){
+										if (err) {
+											responseErr(ws, msg.cmd, 'db_err', msg.id);
+										} else {
+											if (count > MAX_ROOM_SIZE) {	// room is full
+												redisclient.ltrim('room:'+roomid, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
+												responseErr(ws, msg.cmd, 'room_full_err', msg.id);
+											} else {
+												redisclient.lrange('room:'+roomid, 0, -1, function(err,users){
+													if (err) {
+														responseErr(ws, msg.cmd, 'db_err', msg.id);
+													} else {
+														responseData(ws, msg.cmd, {room:{users:users}}, msg.id);
+													}
+												});
+											}
+										}
+									});
+								} catch (e) {
+									responseErr(ws, msg.cmd, 'msg_err', msg.id);
+								}
+							} else if (msg.cmd=='randroom'){
+								// get a random* room with available seats
 							} else {
 								responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
 							}
@@ -211,7 +246,6 @@ wss.on('connection', function(ws) {
 					});
 				}
 			});
-			onRoomMsg(ws, msg);
 			break;
 		case 'rename':
 			try {
@@ -403,3 +437,5 @@ wss.kick = function (user) {
 		removeWs(ws);
 	}
 }
+
+}	// end else cluster
