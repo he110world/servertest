@@ -1,3 +1,4 @@
+/*
 var cluster = require('cluster');
 var numCPUs = require('os').cpus().length;
 
@@ -11,7 +12,7 @@ if (cluster.isMaster) {
 		console.log('worker ' + worker.process.pid + 'exit');
 	});
 } else {
-
+*/
 var redis = require('redis');
 var userpub = redis.createClient();
 var usersub = redis.createClient();
@@ -53,6 +54,10 @@ function responseData (ws, cmd, data, id) {
 	response(ws, cmd, '', id);
 }
 
+function publishData (pub, channel, data) {
+	pub.publish(channel, JSON.stringify(data));
+}
+
 function randomString(bits){
 	var chars,rand,i,ret;
 	chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -90,30 +95,47 @@ usersub.on('message', function(channel, message){
 	}
 });
 
+function addRoomUser (roomid, user) {
+	room2user[roomid] = room2user[roomid] || {};
+	room2user[roomid][user] = 1;
+}
+
+function delRoomUser (roomid, user) {
+	if (room2user[roomid]) {
+		delete room2user[roomid][user];
+	}
+}
+
+function delRoom (roomid) {
+	delete room2user[roomid];
+}
+
 roomsub.psubscribe('room.*');	//psubscribe -> pmessage
 roomsub.on('pmessage', function(pattern, channel, message){
 	var roomid = channel.split('.')[1];
-	try {
-		var msg = JSON.parse(message);
-	} catch(e) {
-		msg = {};
-	}
 	
 	// find users in the room
 	var users = room2user[roomid];
-	if (!users) {
-		switch (msg.cmd) {
-		case 'sync':	// sync properties with other players
-			var syncmsg = {};
-			syncmsg.cmd = 'sync';
-			syncmsg.data = msg.data;
-			var syncstr = JSON.stringify(syncmsg);
-			for(var i in users) {
-				var ws = user2ws[users[i]];
-				if (ws) {
-					ws.send(syncstr);
+	if (users) {
+		try {
+			var msg = JSON.parse(message);
+			var broadcast = function (data) {
+				var datastr = JSON.stringify(data);
+				for(var user in users) {
+					var ws = user2ws[user];
+					if (ws) {
+						ws.send(datastr);
+					}
 				}
 			}
+		} catch(e) {
+			msg = {};
+		}
+
+		switch (msg.cmd) {
+		case 'sync':	// sync properties with other players
+		case 'chat':
+			broadcast({cmd:msg.cmd, data:msg.data});
 			break;
 		}
 	}
@@ -179,6 +201,7 @@ wss.on('connection', function(ws) {
 		case 'joinroom':
 		case 'randroom':
 		case 'quitroom':
+		case 'killroom':
 		case 'chat':
 			checkSession(msg.session, function(err, user){
 				if (err) {
@@ -189,9 +212,23 @@ wss.on('connection', function(ws) {
 							responseErr(ws, msg.cmd, 'db_err', msg.id);
 						} else if (roomid) {	// room exists
 							if (msg.cmd=='quitroom') {
+								delRoomUser(roomid, user);
+								redisclient.multi()
+								.del('roomid:'+user)
+								.lrem('room:'+roomid, 1, user)
+								.exec(function(err, data){
+									if (err) {
+										responseErr(ws, msg.cmd, 'db_err', msg.id);
+									} else {
+										responseData(ws, msg.cmd, {room:null}, msg.id);
+									}
+								});
+							} else if (msg.cmd=='killroom') {
+
 							} else if (msg.cmd=='chat') {
+								publishData(roompub, 'room.'+roomid, {cmd:'chat', data:{user:user, msg:msg.data.msg}});
 							} else {
-								responseErr(ws, msg.cmd, 'not_in_room_err', msg.id);
+								responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
 							}
 						} else {	// room does not exist
 							if (msg.cmd=='makeroom') {
@@ -199,6 +236,7 @@ wss.on('connection', function(ws) {
 									if (err || !newid) {
 										responseErr(ws, msg.cmd, 'db_err', msg.id);
 									} else {
+										addRoomUser(newid, user);
 										redisclient
 										.multi()
 										.set('roomid:'+user, newid)
@@ -223,11 +261,18 @@ wss.on('connection', function(ws) {
 												redisclient.ltrim('room:'+roomid, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
 												responseErr(ws, msg.cmd, 'room_full_err', msg.id);
 											} else {
-												redisclient.lrange('room:'+roomid, 0, -1, function(err,users){
+												redisclient.set('roomid:'+user, roomid, function(err,res){
 													if (err) {
 														responseErr(ws, msg.cmd, 'db_err', msg.id);
 													} else {
-														responseData(ws, msg.cmd, {room:{users:users}}, msg.id);
+														redisclient.lrange('room:'+roomid, 0, -1, function(err,users){
+															if (err) {
+																responseErr(ws, msg.cmd, 'db_err', msg.id);
+															} else {
+																addRoomUser(roomid, user);
+																responseData(ws, msg.cmd, {room:{users:users}}, msg.id);
+															}
+														});
 													}
 												});
 											}
@@ -238,8 +283,9 @@ wss.on('connection', function(ws) {
 								}
 							} else if (msg.cmd=='randroom'){
 								// get a random* room with available seats
+								responseErr(ws, msg.cmd, 'not_impl_err', msg.id);
 							} else {
-								responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
+								responseErr(ws, msg.cmd, 'not_in_room_err', msg.id);
 							}
 
 						}
@@ -397,7 +443,8 @@ wss.on('connection', function(ws) {
 									ok = false;
 								}
 							} else {
-								userpub.publish('user', JSON.stringify({cmd:'kick', user:user, appid:appid}));
+//								userpub.publish('user', JSON.stringify({cmd:'kick', user:user, appid:appid}));
+								publishData(userpub, 'user', {cmd:'kick', user:user, appid:appid});
 							}
 						} 
 						if (ok) {
@@ -411,8 +458,12 @@ wss.on('connection', function(ws) {
 										user2ws[user] = ws;
 										ws2user[ws] = user;
 										response(ws, 'login', {session:session}, msg.id);
+
+										// in a room?
+										redisclient.get('roomid:'+user, function(err,roomid){
+											addRoomUser(roomid, user);
+										});
 									});
-								
 								});
 							});	
 						}
@@ -438,4 +489,4 @@ wss.kick = function (user) {
 	}
 }
 
-}	// end else cluster
+//}	// end else cluster
