@@ -119,8 +119,8 @@ roomsub.on('pmessage', function(pattern, channel, message){
 	if (users) {
 		try {
 			var msg = JSON.parse(message);
-			var broadcast = function (data) {
-				var datastr = JSON.stringify(data);
+			var broadcast = function (cmd,data) {
+				var datastr = JSON.stringify({cmd:cmd,data:data});
 				for(var user in users) {
 					var ws = user2ws[user];
 					if (ws) {
@@ -135,7 +135,12 @@ roomsub.on('pmessage', function(pattern, channel, message){
 		switch (msg.cmd) {
 		case 'sync':	// sync properties with other players
 		case 'chat':
-			broadcast({cmd:msg.cmd, data:msg.data});
+		case 'quit':
+		case 'join':
+			broadcast(msg.cmd, msg.data);
+			break;
+		case 'kill':
+			delete room2user[roomid];
 			break;
 		}
 	}
@@ -161,6 +166,10 @@ function checkSession (session, cb) {
 	} else {
 		cb('session错误');
 	}
+}
+
+function roomMsg (roomid, cmd, data) {
+	publishData(roompub, 'room.'+roomid, {cmd:cmd, data:data});
 }
 
 var MAX_ROOM_SIZE = 4;
@@ -201,7 +210,6 @@ wss.on('connection', function(ws) {
 		case 'joinroom':
 		case 'randroom':
 		case 'quitroom':
-		case 'killroom':
 		case 'chat':
 			checkSession(msg.session, function(err, user){
 				if (err) {
@@ -212,21 +220,40 @@ wss.on('connection', function(ws) {
 							responseErr(ws, msg.cmd, 'db_err', msg.id);
 						} else if (roomid) {	// room exists
 							if (msg.cmd=='quitroom') {
-								delRoomUser(roomid, user);
-								redisclient.multi()
-								.del('roomid:'+user)
-								.lrem('room:'+roomid, 1, user)
-								.exec(function(err, data){
+								redisclient.llen('room:'+roomid, function(err,len){
 									if (err) {
 										responseErr(ws, msg.cmd, 'db_err', msg.id);
 									} else {
-										responseData(ws, msg.cmd, {room:null}, msg.id);
+										if (len<2) { // destroy the room if it's empty
+											redisclient.multi()
+											.del('room:'+roomid)
+											.del('roomid:'+user)
+											.exec(function(err){
+												if (err) {
+													responseErr(ws, msg.cmd, 'db_err', msg.id);
+												} else {
+													responseData(ws, msg.cmd, {room:null}, msg.id);
+													delRoom(roomid);
+												}
+											});
+										} else { // tell others that I left the room
+											redisclient.multi()
+											.del('roomid:'+user)
+											.lrem('room:'+roomid, 1, user)
+											.exec(function(err, data){
+												if (err) {
+													responseErr(ws, msg.cmd, 'db_err', msg.id);
+												} else {
+													roomMsg(roomid, 'quit', {user:user});
+													delRoomUser(roomid, user);
+												}
+											});
+										}
 									}
 								});
-							} else if (msg.cmd=='killroom') {
 
 							} else if (msg.cmd=='chat') {
-								publishData(roompub, 'room.'+roomid, {cmd:'chat', data:{user:user, msg:msg.data.msg}});
+								roomMsg(roomid, 'chat', {user:user, msg:msg.data.msg});
 							} else {
 								responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
 							}
@@ -253,29 +280,38 @@ wss.on('connection', function(ws) {
 							} else if (msg.cmd=='joinroom') {
 								try {
 									var roomid = msg.data.roomid;
-									redisclient.lpush('room:'+roomid, user, function(err,count){
+									redisclient.get('room:'+roomid, function(err,data){
 										if (err) {
 											responseErr(ws, msg.cmd, 'db_err', msg.id);
+										} else if (!data) {
+											responseErr(ws, msg.cmd, 'room_not_exist', msg.id);
 										} else {
-											if (count > MAX_ROOM_SIZE) {	// room is full
-												redisclient.ltrim('room:'+roomid, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
-												responseErr(ws, msg.cmd, 'room_full_err', msg.id);
-											} else {
-												redisclient.set('roomid:'+user, roomid, function(err,res){
-													if (err) {
-														responseErr(ws, msg.cmd, 'db_err', msg.id);
+											redisclient.lpush('room:'+roomid, user, function(err,count){
+												if (err) {
+													responseErr(ws, msg.cmd, 'db_err', msg.id);
+												} else {
+													if (count > MAX_ROOM_SIZE) {	// room is full
+														redisclient.ltrim('room:'+roomid, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
+														responseErr(ws, msg.cmd, 'room_full_err', msg.id);
 													} else {
-														redisclient.lrange('room:'+roomid, 0, -1, function(err,users){
+														redisclient.set('roomid:'+user, roomid, function(err,res){
 															if (err) {
 																responseErr(ws, msg.cmd, 'db_err', msg.id);
 															} else {
-																addRoomUser(roomid, user);
-																responseData(ws, msg.cmd, {room:{users:users}}, msg.id);
+																redisclient.lrange('room:'+roomid, 0, -1, function(err,users){
+																	if (err) {
+																		responseErr(ws, msg.cmd, 'db_err', msg.id);
+																	} else {
+																		addRoomUser(roomid, user);
+																		responseData(ws, msg.cmd, {room:{users:users}}, msg.id);
+																		roomMsg(roomid, 'join', {user:user});
+																	}
+																});
 															}
 														});
 													}
-												});
-											}
+												}
+											});
 										}
 									});
 								} catch (e) {
@@ -287,7 +323,6 @@ wss.on('connection', function(ws) {
 							} else {
 								responseErr(ws, msg.cmd, 'not_in_room_err', msg.id);
 							}
-
 						}
 					});
 				}
