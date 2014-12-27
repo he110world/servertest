@@ -154,21 +154,7 @@ function removeWs (ws) {
 	}
 }
 
-function checkSession (session, cb) {
-	if (session) {
-		redisclient.get('sessionuser:'+session, function(err, user) {
-			if (err || !user) {
-				cb('session错误');
-			} else {
-				cb(null, user);
-			}
-		});
-	} else {
-		cb('session错误');
-	}
-}
-
-function roomMsg (roomid, cmd, data) {
+function roommsg (roomid, cmd, data) {
 	publishData(roompub, 'room.'+roomid, {cmd:cmd, data:data});
 }
 
@@ -185,7 +171,6 @@ wss.on('connection', function(ws) {
 			if (user) {
 				if (code == 4001) {	// kick. code 4000-4999 can be used by application.
 					console.log('kick', sess);
-//					redisclient.del('sessionuser:'+sess);
 				} else {
 					console.log('close');
 					delete user2ws[user];
@@ -202,6 +187,74 @@ wss.on('connection', function(ws) {
 		} catch (e) {
 			msg = {};
 		}
+
+		var getuser = function (cb) {
+			var session = msg.session;
+			if (session) {
+				redisclient.get('sessionuser:'+session, function(err, user) {
+					if (err || !user) {
+						responseErr(ws, msg.cmd, 'session_err', msg.id);
+					} else {
+						if (typeof cb == 'function') {
+							cb(user);
+						}
+					}
+				});
+			} else {
+				responseErr(ws, msg.cmd, 'session_err', msg.id);
+			}
+		}
+
+		var check = function (cb) {
+			return function (err, data) {
+				if (err) {
+					responseErr(ws, msg.cmd, 'db_err', msg.id);
+				} else {
+					if (typeof cb == 'function') {
+						cb(data);
+					}
+				}
+			}
+		}
+
+		var check2 = function (cb) {
+			return function (err, data) {
+				if (err || !data) {
+					responseErr(ws, msg.cmd, 'db_err', msg.id);
+				} else {
+					if (typeof cb == 'function') {
+						cb(data);
+					}
+				}
+			}
+		}
+
+		var check2err = function (errmsg, cb) {
+			return function (err, data) {
+				if (err) {
+					responseErr(ws, msg.cmd, 'db_err', msg.id);
+				} else if (!data) {
+					responseErr(ws, msg.cmd, errmsg, msg.id);
+				} else {
+					if (typeof cb == 'function') {
+						cb(data);
+					}
+				}
+			}
+		}
+
+		var senderr = function (errmsg) {
+			responseErr(ws, msg.cmd, errmsg, msg.id);
+		}
+
+		var sendstr = function (text) {
+			response(ws, msg.cmd, text, msg.id);
+		}
+
+		var send = function (data) {
+			responseData(ws, msg.cmd, data, msg.id);
+		}
+
 		switch(msg.cmd) {
 		case 'echo': 
 			response(ws, 'echo', msg.data, msg.id);
@@ -211,261 +264,172 @@ wss.on('connection', function(ws) {
 		case 'randroom':
 		case 'quitroom':
 		case 'chat':
-			checkSession(msg.session, function(err, user){
-				if (err) {
-					responseErr(ws, msg.cmd, 'session_err', msg.id);
-				} else {
-					redisclient.get('roomid:'+user, function(err,roomid){
-						if (err) {
-							responseErr(ws, msg.cmd, 'db_err', msg.id);
-						} else if (roomid) {	// room exists
-							if (msg.cmd=='quitroom') {
-								redisclient.llen('room:'+roomid, function(err,len){
-									if (err) {
-										responseErr(ws, msg.cmd, 'db_err', msg.id);
-									} else {
-										if (len<2) { // destroy the room if it's empty
-											redisclient.multi()
-											.del('room:'+roomid)
-											.del('roomid:'+user)
-											.exec(function(err){
-												if (err) {
-													responseErr(ws, msg.cmd, 'db_err', msg.id);
-												} else {
-													responseData(ws, msg.cmd, {room:null}, msg.id);
-													delRoom(roomid);
-												}
-											});
-										} else { // tell others that I left the room
-											redisclient.multi()
-											.del('roomid:'+user)
-											.lrem('room:'+roomid, 1, user)
-											.exec(function(err, data){
-												if (err) {
-													responseErr(ws, msg.cmd, 'db_err', msg.id);
-												} else {
-													roomMsg(roomid, 'quit', {user:user});
-													delRoomUser(roomid, user);
-												}
-											});
-										}
-									}
-								});
-
-							} else if (msg.cmd=='chat') {
-								roomMsg(roomid, 'chat', {user:user, msg:msg.data.msg});
-							} else {
-								responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
-							}
-						} else {	// room does not exist
-							if (msg.cmd=='makeroom') {
-								redisclient.incr('next_room_id', function(err, newid){
-									if (err || !newid) {
-										responseErr(ws, msg.cmd, 'db_err', msg.id);
-									} else {
-										addRoomUser(newid, user);
-										redisclient
-										.multi()
-										.set('roomid:'+user, newid)
-										.lpush('room:'+newid, user)
-										.exec(function(err, data){
-											if (err) {
-												responseErr(ws, msg.cmd, 'db_err', msg.id);
-											} else {
-												responseData(ws, msg.cmd, {room:{roomid:newid, users:[user]}}, msg.id);
-											}
-										});
-									}
-								});
-							} else if (msg.cmd=='joinroom') {
-								try {
-									var roomid = msg.data.roomid;
-									redisclient.get('room:'+roomid, function(err,data){
-										if (err) {
-											responseErr(ws, msg.cmd, 'db_err', msg.id);
-										} else if (!data) {
-											responseErr(ws, msg.cmd, 'room_not_exist', msg.id);
-										} else {
-											redisclient.lpush('room:'+roomid, user, function(err,count){
-												if (err) {
-													responseErr(ws, msg.cmd, 'db_err', msg.id);
-												} else {
-													if (count > MAX_ROOM_SIZE) {	// room is full
-														redisclient.ltrim('room:'+roomid, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
-														responseErr(ws, msg.cmd, 'room_full_err', msg.id);
-													} else {
-														redisclient.set('roomid:'+user, roomid, function(err,res){
-															if (err) {
-																responseErr(ws, msg.cmd, 'db_err', msg.id);
-															} else {
-																redisclient.lrange('room:'+roomid, 0, -1, function(err,users){
-																	if (err) {
-																		responseErr(ws, msg.cmd, 'db_err', msg.id);
-																	} else {
-																		addRoomUser(roomid, user);
-																		responseData(ws, msg.cmd, {room:{users:users}}, msg.id);
-																		roomMsg(roomid, 'join', {user:user});
-																	}
-																});
-															}
-														});
-													}
-												}
-											});
-										}
-									});
-								} catch (e) {
-									responseErr(ws, msg.cmd, 'msg_err', msg.id);
+			getuser(function(user){
+				redisclient.get('roomid:'+user, check(function(roomid){
+					if (roomid) {	// room exists
+						if (msg.cmd=='quitroom') {
+							redisclient.llen('room:'+roomid, check(function(len){
+								if (len<2) { // destroy the room if it's empty
+									redisclient.multi()
+									.del('room:'+roomid)
+									.del('roomid:'+user)
+									.exec(check(function(){
+										send({room:null});
+										delRoom(roomid);
+									}));
+								} else { // tell others that I left the room
+									redisclient.multi()
+									.del('roomid:'+user)
+									.lrem('room:'+roomid, 1, user)
+									.exec(check(function(){
+										roommsg(roomid, 'quit', {user:user});
+										delRoomUser(roomid, user);
+									}));
 								}
-							} else if (msg.cmd=='randroom'){
-								// get a random* room with available seats
-								responseErr(ws, msg.cmd, 'not_impl_err', msg.id);
-							} else {
-								responseErr(ws, msg.cmd, 'not_in_room_err', msg.id);
-							}
+							}));
+						} else if (msg.cmd=='chat') {
+							roommsg(roomid, 'chat', {user:user, msg:msg.data.msg});
+						} else {
+							responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
 						}
-					});
-				}
+					} else {	// room does not exist
+						if (msg.cmd=='makeroom') {
+							redisclient.incr('next_room_id', check2(function(newid){
+								redisclient
+								.multi()
+								.set('roomid:'+user, newid)
+								.lpush('room:'+newid, user)
+								.exec(check(function(data){
+									addRoomUser(newid, user);
+									send({room:{roomid:newid, users:[user]}});
+								}));
+							}));
+						} else if (msg.cmd=='joinroom') {
+							try {
+								var roomid = msg.data.roomid;
+								var room = 'room:'+roomid;
+								redisclient.exists(room, check2err('room_not_exist',function(data){
+									redisclient.lpush(room, user, check(function(count){
+										if (count > MAX_ROOM_SIZE) {	// room is full
+											redisclient.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
+											senderr('room_full_err');
+										} else {
+											redisclient.set('roomid:'+user, roomid, check(function(res){
+												redisclient.lrange(room, 0, -1, check(function(users){
+													addRoomUser(roomid, user);
+													send({room:{users:users}});
+													roommsg(roomid, 'join', {user:user});
+												}));
+											}));
+										}
+									}));
+								}));
+							} catch (e) {
+								senderr('msg_err');
+							}
+						} else if (msg.cmd=='randroom'){
+							// get a random* room with available seats
+							senderr('not_impl_err');
+						} else {
+							senderr('not_in_room_err');
+						}
+					}
+				}));
 			});
 			break;
 		case 'rename':
 			try {
 				var newname = msg.data.nickname;
 			} catch (e) {
-				responseErr(ws, 'rename', '消息错误', msg.id);
+				senderr('msg_err');
 			}
 			if (!newname) {
-				responseErr(ws, 'rename', '昵称不能为空', msg.id);
+				senderr('empty_nick');
 			} else {
-				checkSession(msg.session, function(err,user) {
-					if (err) {
-						responseErr(ws, 'rename', err, msg.id);
-					} else {
-						// name already exists?
-						// DON'T use SISMEMBER + SADD: ismember和add之间其他玩家可以进行操作
-						redisclient.sadd('nicknames', newname, function(err,res){
-							if (err) {
-								responseErr(ws, 'rename', '数据错误', msg.id);
-							} else if (!res) {
-								responseErr(ws, 'rename', '昵称已存在', msg.id);
-							} else {
-								redisclient.get('account:'+user+':id', function(err, userid){
-									if (!err && userid) {
-										redisclient.hset('role:'+userid, 'nickname', newname, function(err, res){
-											responseData(ws, 'rename', {role:{nickname:newname}}, msg.id);
-										});
-									} else {
-										responseErr(ws, 'rename', '数据错误', msg.id);
-									}
-								});
-							}
-						});
-					}
+				getuser(function(user) {
+					// name already exists?
+					// DON'T use SISMEMBER + SADD: ismember和add之间其他玩家可以进行操作
+					redisclient.sadd('nicknames', newname, check2err('nick_exist',function(){
+						redisclient.get('account:'+user+':id', check2(function(userid){
+							redisclient.hset('role:'+userid, 'nickname', newname, check(function(res){
+								responseData(ws, 'rename', {role:{nickname:newname}}, msg.id);
+							}));
+						}));
+					}));
 				});
 			}
 			break;
 		case 'view':
-			checkSession(msg.session, function(err,user){
-				if (err) {
-					responseErr(ws, 'view', err, msg.id);
-				} else {
-					redisclient.get('account:'+user+':id', function(err,id){
-						if (!err && id) {
-							//
-							switch (msg.data.name) {
-							case 'role':
-								redisclient.hgetall('role:'+id, function(err,role){
-									if (!err) {
-										if (role) {
-											response(ws, 'view', {role:role}, msg.id);
-										} else {
-											// create role
-											var newRole = {
-												level:1, 
-												exp:0, 
-												nickname:'', 
-												id:id, 
-												gold:0, 
-												diamond:0, 
-												cost:0, 
-												redeem:''
-											};
-											redisclient.hmset('role:'+id, newRole, function(err,data){
-												response(ws, 'view', {role:newRole}, msg.id);
-											});
-										}
-									} else {
-										responseErr(ws, 'view', 'role数据错误', msg.id);
-									}
-								});
-								break;
-							case 'girl':
-								redisclient.hgetall('girl:'+id+':'+msg.data.id, function(err,girl){
-									if (!err && girl) {
-										response(ws, 'girl', {girl:girl}, msg.id);
-									} else {
-										responseErr(ws, 'girl', 'girl数据错误', msg.id);
-									}
-								});
-								break;
-							}
-						} else {
-							console.log(user, 'no id');
-							responseErr(ws, 'view', 'id错误', msg.id);
-						}	
-					});
-				}
+			getuser(function(user){
+				redisclient.get('account:'+user+':id', check2(function(id){
+					switch (msg.data.name) {
+						case 'role':
+							redisclient.hgetall('role:'+id, check(function(role){
+								if (role) {
+									response(ws, 'view', {role:role}, msg.id);
+								} else {
+									// create role
+									var newRole = {
+										level:1, 
+										exp:0, 
+										nickname:'', 
+										id:id, 
+										gold:0, 
+										diamond:0, 
+										cost:0, 
+										redeem:''
+									};
+									redisclient.hmset('role:'+id, newRole, check(function(data){
+										response(ws, 'view', {role:newRole}, msg.id);
+									}));
+								}
+							}));
+							break;
+						case 'girl':
+							redisclient.hgetall('girl:'+id+':'+msg.data.id, check2(function(girl){
+								response(ws, 'girl', {girl:girl}, msg.id);
+							}));
+							break;
+					}
+				}));
 			});
 			break;
 		case 'reg':
 			var user = msg.data.user;
-			redisclient.exists('user:'+user, function(err,res){
-				if (err) {
-					responseErr(ws, 'reg', '数据错误', msg.id);
-				} else if (res) {
-					responseErr(ws, 'reg', '用户名已存在', msg.id);
-				} else {
-					var pass = msg.data.pass;
-					if (!pass) {
-						responseErr(ws, 'reg', '密码不能为空', msg.id);
-					} else {
-						// ok
-						redisclient.set('user:'+user, pass, function(err,res){
-							redisclient.incr('next_account_id', function(err,id){
-								if (!err && id) {
-									redisclient.set('account:'+user+':id', id);
-									response(ws, 'reg', '', msg.id);
-								}
-							});
-						});
-					}
-				}
-			});
+			var pass = msg.data.pass;
+			if (!pass) {
+				senderr('empty_pass_err');
+			} else {
+				redisclient.sadd('usernames', newname, check2err('user_exist',function(){
+					redisclient.multi()
+					.incr('next_account_id')
+					.set('user:'+user, pass)
+					.exec(check(function(res){
+						redisclient.set('account:'+user+':id', res[0], check2(function(){
+							response(ws, 'reg', '', msg.id);
+						}));
+					}));
+				}));
+			}
 			break;
 		case 'login':
 			try {
 				var user = msg.data.user;
 				var pass = msg.data.pass;
 			} catch (e) {
-				console.log(e);
-				responseErr(ws, 'login', '数据错误', msg.id);
+				senderr('msg_err');
 				return;
 			}
 			
 			// user/pass valid?
-			redisclient.get('user:'+user, function(err,res){
-				if (err) {
-					responseErr(ws, 'login', '数据错误', msg.id);
-				} else if (!res) {
-					responseErr(ws, 'login', '用户不存在', msg.id);
-				} else if (pass != res) {
-					responseErr(ws, 'login', '密码错误', msg.id);
+			redisclient.get('user:'+user, check2err('user_not_exist', function(storedpass){
+				if (pass != storedpass) {
+					senderr('pass_err');
 				} else {
 					// session exist - multiple logins
-					redisclient.get('session:'+user, function(err,oldsess){
+					redisclient.get('session:'+user, check(function(oldsess){
 						var ok = true;
 						if (oldsess) {
-							console.log('user exist');
 							// kick the prev user
 							var prevws = user2ws[user];
 							if (prevws) {	// same machine
@@ -474,37 +438,36 @@ wss.on('connection', function(ws) {
 									prevws.close(4001);
 									removeWs(prevws);
 								} else {
-									responseErr(ws, 'login', '重复登录', msg.id);
+									senderr('already_loggedin_err');
 									ok = false;
 								}
 							} else {
-//								userpub.publish('user', JSON.stringify({cmd:'kick', user:user, appid:appid}));
 								publishData(userpub, 'user', {cmd:'kick', user:user, appid:appid});
 							}
 						} 
 						if (ok) {
 							generateSession(function(session){
 								// destroy previous sessionuser
-								redisclient.getset('session:'+user, session, function(err, oldsession){
+								redisclient.getset('session:'+user, session, check(function(oldsession){
 									redisclient.multi()
 									.del('sessionuser:'+oldsession, session)
 									.set('sessionuser:'+session, user)
-									.exec(function(err,res){
+									.exec(check(function(res){
 										user2ws[user] = ws;
 										ws2user[ws] = user;
 										response(ws, 'login', {session:session}, msg.id);
 
 										// in a room?
-										redisclient.get('roomid:'+user, function(err,roomid){
+										redisclient.get('roomid:'+user, check(function(roomid){
 											addRoomUser(roomid, user);
-										});
-									});
-								});
+										}));
+									}));
+								}));
 							});	
 						}
-					});
+					}));
 				}
-			});
+			}));
 			break;
 		}
     	});
