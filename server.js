@@ -18,7 +18,9 @@ var userpub = redis.createClient();
 var usersub = redis.createClient();
 var roompub = redis.createClient();
 var roomsub = redis.createClient();
-var redisclient = redis.createClient();
+var db = redis.createClient();
+var table = require('./table.json');
+var GIRL_PRICE = 100;
 
 console.log("Server started");
 var port = parseInt(process.argv[2]);
@@ -30,6 +32,9 @@ var appid = randomString(32);
 var room2user = {};
 
 function response (ws, cmd, data, id) {
+	if (ws.readyState != ws.OPEN) {
+		return;
+	}
 	var resp = {};
 	resp.cmd = cmd;
 	resp.data = data;
@@ -40,6 +45,9 @@ function response (ws, cmd, data, id) {
 }
 
 function responseErr (ws, cmd, err, id) {
+	if (ws.readyState != ws.OPEN) {
+		return;
+	}
 	var resp = {};
 	resp.cmd = cmd;
 	resp.err = err;
@@ -50,8 +58,12 @@ function responseErr (ws, cmd, err, id) {
 }
 
 function responseData (ws, cmd, data, id) {
-	response(ws, 'view', data);
-	response(ws, cmd, '', id);
+	if (cmd != 'view') {
+		response(ws, 'view', data);
+		response(ws, cmd, '', id);
+	} else {
+		response(ws, 'view', data, id);
+	}
 }
 
 function publishData (pub, channel, data) {
@@ -104,10 +116,6 @@ function delRoomUser (roomid, user) {
 	if (room2user[roomid]) {
 		delete room2user[roomid][user];
 	}
-}
-
-function delRoom (roomid) {
-	delete room2user[roomid];
 }
 
 roomsub.psubscribe('room.*');	//psubscribe -> pmessage
@@ -167,14 +175,14 @@ wss.on('connection', function(ws) {
 
 	ws.on('close', function(code, message) {
 		var user = ws2user[ws];
-		redisclient.get('session:'+user, function(err, sess) {
+		db.get('session:'+user, function(err, sess) {
 			if (user) {
 				if (code == 4001) {	// kick. code 4000-4999 can be used by application.
 					console.log('kick', sess);
 				} else {
 					console.log('close');
 					delete user2ws[user];
-					redisclient.del('session:'+user, 'sessionuser:'+sess);
+					db.del('session:'+user, 'sessionuser:'+sess);
 				}
 			}
 		});
@@ -182,22 +190,33 @@ wss.on('connection', function(ws) {
 	});
 
 	ws.on('message', function(message) {
+		if (message == 'ping') {
+			ws.send('pong');
+			return;
+		}
 		try {
 			var msg = JSON.parse(message);
 		} catch (e) {
 			msg = {};
 		}
 
-		var getuser = function (cb) {
+		function getuser (cb) {
+			if (typeof cb != 'function') {
+				return;
+			}
 			var session = msg.session;
 			if (session) {
-				redisclient.get('sessionuser:'+session, function(err, user) {
+				db.get('sessionuser:'+session, function(err, user) {
 					if (err || !user) {
 						responseErr(ws, msg.cmd, 'session_err', msg.id);
 					} else {
-						if (typeof cb == 'function') {
-							cb(user);
-						}
+						db.get('account:'+user+':id', function(err, uid){
+							if (err || !uid) {
+								responseErr(ws, msg.cmd, 'account_err', msg.id);
+							} else {
+								cb(user, uid);
+							}
+						});
 					}
 				});
 			} else {
@@ -205,7 +224,7 @@ wss.on('connection', function(ws) {
 			}
 		}
 
-		var check = function (cb) {
+		function check (cb) {
 			return function (err, data) {
 				if (err) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
@@ -217,7 +236,7 @@ wss.on('connection', function(ws) {
 			}
 		}
 
-		var check2 = function (cb) {
+		function check2 (cb) {
 			return function (err, data) {
 				if (err || !data) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
@@ -229,7 +248,7 @@ wss.on('connection', function(ws) {
 			}
 		}
 
-		var check2err = function (errmsg, cb) {
+		function check2err (errmsg, cb) {
 			return function (err, data) {
 				if (err) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
@@ -243,42 +262,47 @@ wss.on('connection', function(ws) {
 			}
 		}
 
-		var senderr = function (errmsg) {
+		function senderr (errmsg) {
 			responseErr(ws, msg.cmd, errmsg, msg.id);
 		}
 
-		var sendstr = function (text) {
+		function sendstr (text) {
 			response(ws, msg.cmd, text, msg.id);
 		}
 
-		var send = function (data) {
+		function sendobj (data) {
 			responseData(ws, msg.cmd, data, msg.id);
+		}
+
+		function sendnil () {
+			response(ws, msg.cmd, '', msg.id);
 		}
 
 		switch(msg.cmd) {
 		case 'echo': 
-			response(ws, 'echo', msg.data, msg.id);
+			sendobj(msg.data);
 			break;
 		case 'makeroom':
 		case 'joinroom':
 		case 'randroom':
 		case 'quitroom':
 		case 'chat':
+		case 'sync':
 			getuser(function(user){
-				redisclient.get('roomid:'+user, check(function(roomid){
+				db.get('roomid:'+user, check(function(roomid){
 					if (roomid) {	// room exists
 						if (msg.cmd=='quitroom') {
-							redisclient.llen('room:'+roomid, check(function(len){
+							db.llen('room:'+roomid, check(function(len){
 								if (len<2) { // destroy the room if it's empty
-									redisclient.multi()
+									db.multi()
 									.del('room:'+roomid)
 									.del('roomid:'+user)
 									.exec(check(function(){
-										send({room:null});
-										delRoom(roomid);
+										roommsg(roomid, 'kill');
+										sendobj({room:null});
 									}));
 								} else { // tell others that I left the room
-									redisclient.multi()
+									db.multi()
 									.del('roomid:'+user)
 									.lrem('room:'+roomid, 1, user)
 									.exec(check(function(){
@@ -289,35 +313,37 @@ wss.on('connection', function(ws) {
 							}));
 						} else if (msg.cmd=='chat') {
 							roommsg(roomid, 'chat', {user:user, msg:msg.data.msg});
+						} else if (msg.cmd=='sync') {
+							roommsg(roomid, 'sync', {user:user, data:msg.data});
 						} else {
-							responseErr(ws, msg.cmd, 'already_in_room_err', msg.id);
+							senderr('already_in_room_err');
 						}
 					} else {	// room does not exist
 						if (msg.cmd=='makeroom') {
-							redisclient.incr('next_room_id', check2(function(newid){
-								redisclient
+							db.incr('next_room_id', check2(function(newid){
+								db
 								.multi()
 								.set('roomid:'+user, newid)
 								.lpush('room:'+newid, user)
 								.exec(check(function(data){
 									addRoomUser(newid, user);
-									send({room:{roomid:newid, users:[user]}});
+									sendobj({room:{roomid:newid, users:[user]}});
 								}));
 							}));
 						} else if (msg.cmd=='joinroom') {
 							try {
 								var roomid = msg.data.roomid;
 								var room = 'room:'+roomid;
-								redisclient.exists(room, check2err('room_not_exist',function(data){
-									redisclient.lpush(room, user, check(function(count){
+								db.exists(room, check2err('room_not_exist',function(data){
+									db.lpush(room, user, check(function(count){
 										if (count > MAX_ROOM_SIZE) {	// room is full
-											redisclient.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
+											db.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
 											senderr('room_full_err');
 										} else {
-											redisclient.set('roomid:'+user, roomid, check(function(res){
-												redisclient.lrange(room, 0, -1, check(function(users){
+											db.set('roomid:'+user, roomid, check(function(res){
+												db.lrange(room, 0, -1, check(function(users){
 													addRoomUser(roomid, user);
-													send({room:{users:users}});
+													sendobj({room:{users:users}});
 													roommsg(roomid, 'join', {user:user});
 												}));
 											}));
@@ -344,54 +370,216 @@ wss.on('connection', function(ws) {
 				senderr('msg_err');
 			}
 			if (!newname) {
-				senderr('empty_nick');
+				senderr('nick_null_err');
 			} else {
-				getuser(function(user) {
+				getuser(function(user, userid) {
 					// name already exists?
 					// DON'T use SISMEMBER + SADD: ismember和add之间其他玩家可以进行操作
-					redisclient.sadd('nicknames', newname, check2err('nick_exist',function(){
-						redisclient.get('account:'+user+':id', check2(function(userid){
-							redisclient.hset('role:'+userid, 'nickname', newname, check(function(res){
-								responseData(ws, 'rename', {role:{nickname:newname}}, msg.id);
-							}));
+					db.sadd('nicknames', newname, check2err('nick_exist_err',function(){
+						db.hset('role:'+userid, 'nickname', newname, check(function(res){
+							sendobj({role:{nickname:newname}});
 						}));
 					}));
 				});
 			}
 			break;
-		case 'view':
-			getuser(function(user){
-				redisclient.get('account:'+user+':id', check2(function(id){
-					switch (msg.data.name) {
-						case 'role':
-							redisclient.hgetall('role:'+id, check(function(role){
-								if (role) {
-									response(ws, 'view', {role:role}, msg.id);
+		case 'ADD_PHOTON':
+			getuser(function(user, userid){
+				try {
+					var count = msg.data.count;
+				} catch(e) {
+					count = 100;
+				}
+				db.hincrby('role:'+userid, 'photon', count, check(function(){
+					sendnil();
+				}));
+			});
+			break;
+		case 'ADD_ITEM':
+			getuser(function(user, userid){
+				try {
+					var itemid = msg.data.id;
+					var count = msg.data.count;
+					db.hincrby('item:'+userid, itemid, count, check(function(){
+						sendnil();
+					}));
+				} catch (e) {
+				}
+			});
+			break;
+		case 'buyitem':
+			getuser(function(user, userid){
+				// cost
+				
+			});
+			break;
+		case 'buygirl':
+			getuser(function(user, userid){
+				// cost
+				db.hget('role:'+userid, 'photon', check(function(photon){
+					if (photon < GIRL_PRICE) {
+						senderr('not_enough_photon_err');
+					} else {
+						// used items
+						try {
+							var itemcounts = msg.data.item;
+						} catch (e) {
+							itemcounts = null;
+						}
+						var odds = [20, 20, 20, 20, 20];
+						var dobuy = function () {
+							// which wuxing?
+							var rand = Math.floor(Math.random()*100);
+							for (var wx=0; wx<5; wx++) {
+								rand -= odds[wx];
+								if (rand<0) {
+									break;
+								}
+							}
+							wx += 1;
+
+							// rare
+							// 4: 1.5%
+							// 3: 28.5%
+							// 2: 70%
+							rand = Math.random()*100;
+							var rare = 1;
+							if (rand < 1.5) {
+								rare = 4;
+							} else if (rand < 28.5) {
+								rare = 3;
+							} else {
+								rare = 2;
+							}
+
+							// find all suitable girls 
+							var wxgirls = [];
+							var matchgirls = [];
+							for (var g in table.girl) {
+								if (table.girl[g].Wuxing == wx) {
+									wxgirls.push(table.girl[g]);
+									if (table.girl[g].Rare == rare) {
+										matchgirls.push(table.girl[g]);
+									}
+								}
+							}
+
+							if (matchgirls.length > 0) {	// found
+								var girl = matchgirls[Math.floor(Math.random()*matchgirls.length)];
+							} else {
+								var girl = wxgirls[Math.floor(Math.random()*matchgirls.length)];
+							}
+							// already exist?
+							db.sismember('girls:'+userid, girl.ID, check(function(exist){
+								if (exist) {
+									// convert to medal
+									var medalid = 12000 + rare;
+									db.hincrby('item:'+userid, medalid, 10, check(function(count){
+										var itemdata = {};
+										itemdata[medalid] = count;
+										sendobj({item:itemdata});
+									}));
 								} else {
-									// create role
-									var newRole = {
-										level:1, 
-										exp:0, 
-										nickname:'', 
-										id:id, 
-										gold:0, 
-										diamond:0, 
-										cost:0, 
-										redeem:''
-									};
-									redisclient.hmset('role:'+id, newRole, check(function(data){
-										response(ws, 'view', {role:newRole}, msg.id);
+									db.sadd('girls:'+userid, girl.ID, check(function(){
+										db.hmset('girl:'+userid+':'+girl.ID, girl, check(function(){
+											var girldata = {};
+											girldata[girl.ID] = girl;
+											sendobj({girl:girldata});
+										}));
 									}));
 								}
 							}));
-							break;
-						case 'girl':
-							redisclient.hgetall('girl:'+id+':'+msg.data.id, check2(function(girl){
-								response(ws, 'girl', {girl:girl}, msg.id);
+						}
+						if (itemcounts) {
+							var idlist = [];
+							for (var itemid in itemcounts) {
+								idlist.push(itemid);
+							}
+							db.hmget('item:'+userid, idlist, check(function(countlist){
+								for (var i in idlist) {
+									var id = idlist[i];
+									var cost = itemcounts[id];
+									if (cost > countlist[i]) {
+										senderr('not_enough_item_err');
+										return;
+									} else {
+										itemcounts[id] = countlist[i] - cost;
+										var effect = table.item[id].Effect;
+										if ( effect >= 5 && effect <= 9) {
+											var effval = table.item[id].EffectValue;
+											var incdec = effval.split('$');
+											for (var j=0; j<5; j++) {
+												if (j == effect-5) {
+													odds[j] += incdec[0];
+												} else {
+													odds[j] -= incdec[1];
+												}
+											}											
+										}
+									}
+								}
+
+								db.hmset('item:'+userid, itemcounts, check(function(){
+									dobuy();
+								}));
 							}));
-							break;
+						} else {
+							dobuy();
+						}
 					}
 				}));
+				// random
+			});
+			break;
+		case 'view':
+			getuser(function(user, id){
+				switch (msg.data.name) {
+					case 'role':
+						db.hgetall('role:'+id, check(function(role){
+							if (role) {
+								sendobj({role:role});
+							} else {
+								// create role
+								var newRole = {
+									level:1, 
+							exp:0, 
+							nickname:'', 
+							id:id, 
+							gold:0, 
+							diamond:0, 
+							cost:0, 
+							redeem:''
+								};
+								db.hmset('role:'+id, newRole, check(function(data){
+									sendobj({role:newRole});
+								}));
+							}
+						}));
+						break;
+					case 'girl':
+						db.hgetall('girl:'+id+':'+msg.data.id, check2(function(girl){
+							var girldata = {};
+							girldata[girl.ID] = girl;
+							sendobj({girl:girldata});
+						}));
+						break;
+					case 'room':
+						db.get('roomid:'+user, check(function(roomid){
+							if (roomid) {
+								db.lrange('room:'+roomid, 0, -1, check(function(room){
+									sendobj({room:{roomid:roomid, users:room}});
+								}));
+							} else {
+								sendobj({room:null});
+							}
+						}));
+						break;
+					case 'item':
+						db.hgetall('item:'+id, check2(function(item){
+							sendobj({item:item});
+						}));
+						break;
+				}
 			});
 			break;
 		case 'reg':
@@ -400,13 +588,13 @@ wss.on('connection', function(ws) {
 			if (!pass) {
 				senderr('empty_pass_err');
 			} else {
-				redisclient.sadd('usernames', newname, check2err('user_exist',function(){
-					redisclient.multi()
+				db.sadd('usernames', newname, check2err('user_exist',function(){
+					db.multi()
 					.incr('next_account_id')
 					.set('user:'+user, pass)
 					.exec(check(function(res){
-						redisclient.set('account:'+user+':id', res[0], check2(function(){
-							response(ws, 'reg', '', msg.id);
+						db.set('account:'+user+':id', res[0], check2(function(){
+							sendnil();
 						}));
 					}));
 				}));
@@ -422,12 +610,12 @@ wss.on('connection', function(ws) {
 			}
 			
 			// user/pass valid?
-			redisclient.get('user:'+user, check2err('user_not_exist', function(storedpass){
+			db.get('user:'+user, check2err('user_not_exist', function(storedpass){
 				if (pass != storedpass) {
 					senderr('pass_err');
 				} else {
 					// session exist - multiple logins
-					redisclient.get('session:'+user, check(function(oldsess){
+					db.get('session:'+user, check(function(oldsess){
 						var ok = true;
 						if (oldsess) {
 							// kick the prev user
@@ -448,17 +636,17 @@ wss.on('connection', function(ws) {
 						if (ok) {
 							generateSession(function(session){
 								// destroy previous sessionuser
-								redisclient.getset('session:'+user, session, check(function(oldsession){
-									redisclient.multi()
+								db.getset('session:'+user, session, check(function(oldsession){
+									db.multi()
 									.del('sessionuser:'+oldsession, session)
 									.set('sessionuser:'+session, user)
 									.exec(check(function(res){
 										user2ws[user] = ws;
 										ws2user[ws] = user;
-										response(ws, 'login', {session:session}, msg.id);
+										sendobj({session:session});
 
 										// in a room?
-										redisclient.get('roomid:'+user, check(function(roomid){
+										db.get('roomid:'+user, check(function(roomid){
 											addRoomUser(roomid, user);
 										}));
 									}));
@@ -487,4 +675,10 @@ wss.kick = function (user) {
 	}
 }
 
+process.on('SIGINT', function() {
+	for(var i in wss.clients) {
+		wss.clients[i].close(4002);
+	}
+	process.exit();
+});
 //}	// end else cluster
