@@ -390,7 +390,7 @@ wss.on('connection', function(ws) {
 				} catch(e) {
 					count = 100;
 				}
-				db.hincrby('role:'+userid, 'photon', count, check(function(){
+				db.hincrby('role:'+userid, 'PhotonSeed', count, check(function(){
 					sendnil();
 				}));
 			});
@@ -410,13 +410,47 @@ wss.on('connection', function(ws) {
 		case 'buyitem':
 			getuser(function(user, userid){
 				// cost
-				
+				try {
+					var shopid = msg.data.shopid;
+					var itemid = msg.data.itemid;
+					var money = null;
+					if (shopid == 0) {	//photonseed
+						money = "PhotonSeed";
+					} else if (shopid == 1) {	//friendcoin
+						money = "FriendCoin";
+					} else if (shopid == 2) {	//oddcoin
+						money = "OddCoin";
+					} else {
+						senderr('wrong_shop_err');
+						return;
+					}
+					db.hget('role:'+userid, money, check(function(count){
+						var cost = table.item[itemid][money];
+						if (count < cost) {
+							senderr('not_enough_'+money+'_err');
+						} else {
+							db.hincrby('role:'+userid, money, -cost, check(function(newmoney){
+								db.hincrby('item:'+userid, itemid, 1, check(function(newcount){
+									var obj = {};
+									obj.role = {};
+									obj.role[money] = newmoney;
+									obj.item = {};
+									obj.item[itemid] = newcount;
+									sendobj(obj);
+								}));
+							}));
+						}
+					}));
+
+				} catch (e) {
+					senderr('data_err');
+				}
 			});
 			break;
 		case 'buygirl':
 			getuser(function(user, userid){
 				// cost
-				db.hget('role:'+userid, 'photon', check(function(photon){
+				db.hget('role:'+userid, 'PhotonSeed', check(function(photon){
 					if (photon < GIRL_PRICE) {
 						senderr('not_enough_photon_err');
 					} else {
