@@ -18,6 +18,7 @@ var userpub = redis.createClient();
 var usersub = redis.createClient();
 var roompub = redis.createClient();
 var roomsub = redis.createClient();
+var adminsub = redis.createClient();
 var db = redis.createClient();
 var table = require('./table.json');
 var GIRL_PRICE = 100;
@@ -90,6 +91,37 @@ function generateSession (cb) {
 	cb(session);
 }
 
+adminsub.subscribe('admin');
+adminsub.on('message', function(channel, message){
+	try {
+		var msg = JSON.parse(message);
+	} catch(e) {
+		msg = {};
+		console.log(e);
+	}
+	switch (msg.cmd) {
+		case 'reloadtable':
+			try {
+				var fs = require("fs");
+				table = JSON.parse(fs.readFileSync("./table.json", "utf8"));
+			} catch (e) {
+				console.log(e);
+			}
+			break;
+		case 'broadcast':
+			if (msg.p1) {
+				wss.broadcast(msg.p1);
+			}
+			break;
+		case 'kick':
+			if (msg.p1) {
+				wss.kick(msg.p1);
+			}
+			break;
+	}
+	
+});
+
 usersub.subscribe('user');
 usersub.on('message', function(channel, message){
 	try {
@@ -100,9 +132,12 @@ usersub.on('message', function(channel, message){
 	}
 	switch (msg.cmd) {
 	case 'kick':
-		if (msg.appid != appid) {	// invoked by other server
+		if (appid != msg.appid) {	// don't kick yourself!
 			wss.kick(msg.user);
 		}
+		break;
+	case 'notify':
+		wss.notify(msg.user, msg.msgstr);
 		break;
 	}
 });
@@ -164,6 +199,24 @@ function removeWs (ws) {
 
 function roommsg (roomid, cmd, data) {
 	publishData(roompub, 'room.'+roomid, {cmd:cmd, data:data});
+}
+
+function notifymsg (user, msg) {
+	var ws = user2ws[user];
+	try {
+		var msgstr = JSON.stringify(msg);
+		if (ws) {	// same server : don't bother to PUB
+			ws.send(msgstr);
+		} else {	// different server : simply PUB
+			publishData(userpub, 'user', {cmd:'notify', user:user, msgstr:msgstr});
+		}
+	} catch (e) {
+		console.log(e);
+	}
+}
+
+function kickmsg (user) {
+	publishData(userpub, 'user', {cmd:'kick', user:user, appid:appid});
 }
 
 var MAX_ROOM_SIZE = 4;
@@ -407,6 +460,96 @@ wss.on('connection', function(ws) {
 				}
 			});
 			break;
+		case 'requestfriend':
+			// <user> -> pendingfriends:<target>
+			// tell target
+			getuser(function(user, userid){
+				try {
+					var target = msg.data.target;
+					db.sadd('pendingfriends:'+target, user, check(function(){
+						sendnil();
+						var data = {};
+						data.pendingfriends = {};
+						data.pendingfriends[user] = 1;
+						notifymsg(target, {cmd:"view", data:data});
+					}));
+				} catch (e) {
+					senderr('data_err');
+				}
+			});
+			break;
+		case 'delfriend':
+			// friends:<user> -remove-> <target>
+			// friends:<target> -remove-> <user>
+			// tell self
+			// tell target
+			getuser(function(user, userid){
+				try {
+					var target = msg.data.target;
+					db.srem('friends:'+user, target, check2(function(){
+						db.srem('friends:'+target, user, check2(function(){
+							var userdata = {};
+							userdata.friends = {};
+							userdata.friends[target] = null;
+							sendobj(userdata);
+
+							var targetdata = {};
+							targetdata.friends = {};
+							targetdata.friends[user] = null;
+							notifymsg(target, {cmd:"view", data:targetdata});
+						}));
+					}));
+				} catch (e) {
+					senderr('data_err');
+				}
+			});
+			break;
+		case 'acceptfriend':
+			// pendingfriends:<user> -remove-> <target>
+			// <target> -> friends:<user>
+			// <user> -> friends:<target>
+			// tell target
+			getuser(function(user, userid){
+				try {
+					var target = msg.data.target;
+					db.srem('pendingfriends:'+user, target, check2(function(){
+						db.sadd('friends:'+user, target, check(function(){
+							db.sadd('friends:'+target, user, check(function(){
+								var userdata = {};
+								userdata.pendingfriends = {};
+								userdata.pendingfriends[target] = null;
+								userdata.friends = {};
+								userdata.friends[target] = 1;
+								sendobj(userdata);
+
+								var targetdata = {};
+								targetdata.friends = {};
+								targetdata.friends[user] = 1;
+								notifymsg(target, {cmd:"view", data:targetdata});
+							}));
+						}));
+					}));
+				} catch (e) {
+					senderr('data_err');
+				}
+			});
+			break;
+		case 'declinefriend':
+			// pendingfriends:<userid> -remove-> <targetid>
+			getuser(function(user, userid){
+				try {
+					var target = msg.data.target;
+					db.srem('pendingfriends:'+user, target, check2(function(){
+						var userdata = {};
+						userdata.pendingfriends = {};
+						userdata.pendingfriends[target] = null;
+						sendobj(userdata);
+					}));
+				} catch (e) {
+					senderr('data_err');
+				}
+			});
+			break;
 		case 'buyitem':
 			getuser(function(user, userid){
 				// cost
@@ -414,11 +557,13 @@ wss.on('connection', function(ws) {
 					var shopid = msg.data.shopid;
 					var itemid = msg.data.itemid;
 					var money = null;
-					if (shopid == 0) {	//photonseed
+					if (shopid == 1) {	//credit
+						money = "Credit";
+					} else if (shopid == 2) {	//photonseed
 						money = "PhotonSeed";
-					} else if (shopid == 1) {	//friendcoin
+					} else if (shopid == 3) {	//friendcoin
 						money = "FriendCoin";
-					} else if (shopid == 2) {	//oddcoin
+					} else if (shopid == 4) {	//oddcoin
 						money = "OddCoin";
 					} else {
 						senderr('wrong_shop_err');
@@ -567,7 +712,8 @@ wss.on('connection', function(ws) {
 			break;
 		case 'view':
 			getuser(function(user, id){
-				switch (msg.data.name) {
+				var viewname = msg.data.name;
+				switch (viewname) {
 					case 'role':
 						db.hgetall('role:'+id, check(function(role){
 							if (role) {
@@ -579,8 +725,10 @@ wss.on('connection', function(ws) {
 							exp:0, 
 							nickname:'', 
 							id:id, 
-							gold:0, 
-							diamond:0, 
+							Credit:0, 
+							PhotonSeed:0,
+							FriendCoin:0,
+							OddCoin:0,
 							cost:0, 
 							redeem:''
 								};
@@ -613,6 +761,19 @@ wss.on('connection', function(ws) {
 							sendobj({item:item});
 						}));
 						break;
+					case 'friends':
+					case 'pendingfriends':
+						db.smembers(viewname+':'+user, check(function(friendset){
+							// convert array to obj
+							var friends = {};
+							for (var i in friendset) {
+								friends[friendset[i]] = 1;
+							}
+							var userdata = {};
+							userdata[viewname] = friends;
+							sendobj(userdata);
+						}));
+						break;
 				}
 			});
 			break;
@@ -622,7 +783,7 @@ wss.on('connection', function(ws) {
 			if (!pass) {
 				senderr('empty_pass_err');
 			} else {
-				db.sadd('usernames', newname, check2err('user_exist',function(){
+				db.sadd('usernames', user, check2err('user_exist',function(){
 					db.multi()
 					.incr('next_account_id')
 					.set('user:'+user, pass)
@@ -664,7 +825,7 @@ wss.on('connection', function(ws) {
 									ok = false;
 								}
 							} else {
-								publishData(userpub, 'user', {cmd:'kick', user:user, appid:appid});
+								kickmsg(user);
 							}
 						} 
 						if (ok) {
@@ -706,6 +867,13 @@ wss.kick = function (user) {
 	if (ws) {
 		ws.close();
 		removeWs(ws);
+	}
+}
+
+wss.notify = function (user, datastr) {
+	var ws = user2ws[user];
+	if (ws) {
+		ws.send(datastr);
 	}
 }
 
