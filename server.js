@@ -162,7 +162,7 @@ roomsub.on('pmessage', function(pattern, channel, message){
 	if (users) {
 		try {
 			var msg = JSON.parse(message);
-			var broadcast = function (cmd,data) {
+			var roomcast = function (cmd,data) {
 				var datastr = JSON.stringify({cmd:cmd,data:data});
 				for(var user in users) {
 					var ws = user2ws[user];
@@ -180,7 +180,7 @@ roomsub.on('pmessage', function(pattern, channel, message){
 		case 'chat':
 		case 'quit':
 		case 'join':
-			broadcast(msg.cmd, msg.data);
+			roomcast(msg.cmd, msg.data);
 			break;
 		case 'kill':
 			delete room2user[roomid];
@@ -336,83 +336,96 @@ wss.on('connection', function(ws) {
 			sendobj(msg.data);
 			break;
 		case 'makeroom':
-		case 'joinroom':
-		case 'randroom':
-		case 'quitroom':
-		case 'chat':
-		case 'sync':
 			getuser(function(user){
-				db.get('roomid:'+user, check(function(roomid){
-					if (roomid) {	// room exists
-						if (msg.cmd=='quitroom') {
-							db.llen('room:'+roomid, check(function(len){
-								if (len<2) { // destroy the room if it's empty
-									db.multi()
-									.del('room:'+roomid)
-									.del('roomid:'+user)
-									.exec(check(function(){
-										roommsg(roomid, 'kill');
-										sendobj({room:null});
-									}));
-								} else { // tell others that I left the room
-									db.multi()
-									.del('roomid:'+user)
-									.lrem('room:'+roomid, 1, user)
-									.exec(check(function(){
-										roommsg(roomid, 'quit', {user:user});
-										delRoomUser(roomid, user);
-									}));
-								}
+				db.exists('roomid:'+user, check(function(exist){
+					if (exist) {
+						senderr('already_in_room_err');
+					} else {
+						db.incr('next_room_id', check2(function(newid){
+							db
+							.multi()
+							.set('roomid:'+user, newid)
+							.lpush('room:'+newid, user)
+							.exec(check(function(data){
+								addRoomUser(newid, user);
+								sendobj({room:{roomid:newid, users:[user]}});
 							}));
-						} else if (msg.cmd=='chat') {
-							roommsg(roomid, 'chat', {user:user, msg:msg.data.msg});
-						} else if (msg.cmd=='sync') {
-							roommsg(roomid, 'sync', {user:user, data:msg.data});
-						} else {
-							senderr('already_in_room_err');
-						}
-					} else {	// room does not exist
-						if (msg.cmd=='makeroom') {
-							db.incr('next_room_id', check2(function(newid){
-								db
-								.multi()
-								.set('roomid:'+user, newid)
-								.lpush('room:'+newid, user)
-								.exec(check(function(data){
-									addRoomUser(newid, user);
-									sendobj({room:{roomid:newid, users:[user]}});
-								}));
-							}));
-						} else if (msg.cmd=='joinroom') {
-							try {
-								var roomid = msg.data.roomid;
-								var room = 'room:'+roomid;
-								db.exists(room, check2err('room_not_exist',function(data){
-									db.lpush(room, user, check(function(count){
-										if (count > MAX_ROOM_SIZE) {	// room is full
-											db.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
-											senderr('room_full_err');
-										} else {
-											db.set('roomid:'+user, roomid, check(function(res){
-												db.lrange(room, 0, -1, check(function(users){
-													addRoomUser(roomid, user);
-													sendobj({room:{users:users}});
-													roommsg(roomid, 'join', {user:user});
-												}));
+						}));
+					}	
+				}));
+			});
+			break;
+		case 'joinroom':
+			getuser(function(user){
+				db.exists('roomid:'+user, check(function(exist){
+					if (exist) {
+						senderr('already_in_room_err');
+					} else {
+						try {
+							var roomid = msg.data.roomid;
+							var room = 'room:'+roomid;
+							db.exists(room, check2err('room_not_exist',function(data){
+								db.lpush(room, user, check(function(count){
+									if (count > MAX_ROOM_SIZE) {	// room is full
+										db.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
+										senderr('room_full_err');
+									} else {
+										db.set('roomid:'+user, roomid, check(function(res){
+											db.lrange(room, 0, -1, check(function(users){
+												addRoomUser(roomid, user);
+												sendobj({room:{users:users}});
+												roommsg(roomid, 'join', {user:user});
 											}));
-										}
-									}));
+										}));
+									}
 								}));
-							} catch (e) {
-								senderr('msg_err');
-							}
-						} else if (msg.cmd=='randroom'){
-							// get a random* room with available seats
-							senderr('not_impl_err');
-						} else {
-							senderr('not_in_room_err');
+							}));
+						} catch (e) {
+							senderr('msg_err');
 						}
 					}
+				}));
+			});
+			break;
+		case 'randroom':
+			senderr('not_implemented_err');
+			break;
+		case 'quitroom':
+			getuser(function(user){
+				db.get('roomid:'+user, check2(function(roomid){
+					db.llen('room:'+roomid, check(function(len){
+						if (len<2) { // destroy the room if it's empty
+							db.multi()
+							.del('room:'+roomid)
+							.del('roomid:'+user)
+							.exec(check(function(){
+							roommsg(roomid, 'kill');
+								sendobj({room:null});
+							}));
+						} else { // tell others that I left the room
+							db.multi()
+							.del('roomid:'+user)
+							.lrem('room:'+roomid, 1, user)
+							.exec(check(function(){
+							roommsg(roomid, 'quit', {user:user});
+								delRoomUser(roomid, user);
+							}));
+						}
+					}));
+				}));
+			});
+			break;
+		case 'roomchat':
+			getuser(function(user){
+				db.get('roomid:'+user, check2(function(roomid){
+					roommsg(roomid, 'chat', {user:user, msg:msg.data.msg});
+				}));
+			});
+			break;
+		case 'roomsync':
+			getuser(function(user){
+				db.get('roomid:'+user, check2(function(roomid){
+					roommsg(roomid, 'sync', {user:user, data:msg.data});
 				}));
 			});
 			break;
