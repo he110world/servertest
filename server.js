@@ -449,19 +449,29 @@ wss.on('connection', function(ws) {
 				});
 			}
 			break;
-		case 'ADD_PHOTON':
-			getuser(function(user, userid){
-				try {
-					var count = msg.data.count;
-				} catch(e) {
-					count = 100;
-				}
-				db.hincrby('role:'+userid, 'PhotonSeed', count, check(function(){
-					sendnil();
-				}));
-			});
+		case 'ADD_PhotonSeed':
+		case 'ADD_Credit':
+		case 'ADD_FriendCoin':
+		case 'ADD_OddCoin':
+			try {
+				var money = msg.cmd.split('_')[1];
+				getuser(function(user, userid){
+					try {
+						var count = msg.data.count;
+					} catch(e) {
+						count = 100;
+					}
+					db.hincrby('role:'+userid, money, count, check(function(newcount){
+						var role = {};
+						role[money] = newcount;
+						sendobj({role:role});
+					}));
+				});
+			} catch (e) {
+
+			}
 			break;
-		case 'ADD_ITEM':
+		case 'ADD_Item':
 			getuser(function(user, userid){
 				try {
 					var itemid = msg.data.id;
@@ -584,7 +594,7 @@ wss.on('connection', function(ws) {
 					}
 					db.hget('role:'+userid, money, check(function(count){
 						var cost = table.item[itemid][money];
-						if (count < cost) {
+						if (cost > count) {
 							senderr('not_enough_'+money+'_err');
 						} else {
 							db.hincrby('role:'+userid, money, -cost, check(function(newmoney){
@@ -735,15 +745,15 @@ wss.on('connection', function(ws) {
 								// create role
 								var newRole = {
 									level:1, 
-							exp:0, 
-							nickname:'', 
-							id:id, 
-							Credit:0, 
-							PhotonSeed:0,
-							FriendCoin:0,
-							OddCoin:0,
-							cost:0, 
-							redeem:''
+									exp:0, 
+									nickname:'', 
+									id:id, 
+									Credit:0, 
+									PhotonSeed:0,
+									FriendCoin:0,
+									OddCoin:0,
+									cost:0, 
+									redeem:''
 								};
 								db.hmset('role:'+id, newRole, check(function(data){
 									sendobj({role:newRole});
