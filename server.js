@@ -491,7 +491,6 @@ wss.on('connection', function(ws) {
 						senderr('db_err');
 					} else {
 						var role = new Role(table);
-						console.log(data);
 						role.Lv = data[0];
 						role.RoleExp = data[1];
 						try {
