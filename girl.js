@@ -30,18 +30,16 @@ Girl.prototype.checkVar = function () {
 Girl.prototype.addRankExp = function (expInc) {
 	this.checkVar('table', 'RankExp', 'Rank');
 	var mod = {};
-	var rank = Math.floor(this.Rank);
-	var rankLimit = this.table.exp.Rank.length - 1;
+	var Rank = Math.floor(this.Rank);
+	var RankLimit = this.table.exp.Rank.length - 1;
 	var newExp = Math.floor(this.RankExp) + Math.floor(expInc);
-	var ret = Util.updateLevel(newExp, rank, rankLimit, this.table.exp.RankExp);
-	rank = ret[0];
+	var ret = Util.updateLevel(newExp, Rank, RankLimit, this.table.exp.RankExp);
+	Rank = ret[0];
 	newExp = ret[1];
-	if (rank != this.Rank) {
+	if (Rank != this.Rank) {
 		mod.Rank = Rank;
 	}
 	mod.RankExp = this.RankExp = newExp;
-	this.Lv = Lv;
-
 	return mod;
 }
 

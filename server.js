@@ -705,6 +705,69 @@ wss.on('connection', function(ws) {
 				}
 			});
 			break;
+		case 'useitem':
+			//@cmd useitem
+			//@data itemid
+			//@data targetid
+			//@desc 使用物品(targetid可以是girl的id之类的值)
+			getuser(function(user, userid){
+				try {
+					var itemid = msg.data.itemid;
+					var item = table.item[itemid];
+					if (item.Type == 1) {
+						var girlid = msg.data.targetid;
+					}
+				} catch (e) {
+					senderr('data_err,itemid');
+					return;
+				}
+				var itemkey = 'item:'+userid;
+				db.hget(itemkey, itemid, check2err('no_item_err', function(count){
+					switch (item.Type) {
+						case 1:	//medal
+							if (item.Effect == 1 && girlid) {
+								var query = ['Rank', 'RankExp'];
+								var girlkey = 'girl:'+userid+':'+girlid;
+								db.hmget(girlkey, query, check2(function(data){
+									if (data.length != query.length) {
+										senderr('db_err');
+									} else {
+										var girl = new Girl(table);
+										girl.Rank = data[0];
+										girl.RankExp = data[1];
+										try {
+											var modgirl = girl.addRankExp(item.EffectValue);
+											db.multi()
+											.hmset(girlkey, modgirl)
+											.hincrby(itemkey, itemid, -1)
+											.exec(check(function(res){
+												var itemdata = {};
+												itemdata[itemid] = res[1];
+												var girldata = {};
+												girldata[girlid] = modgirl;
+												sendobj({girl:girldata, item:itemdata});
+											}));
+										} catch (e) {
+											senderr('data_err');
+										}
+									}
+								}));
+								var girl = new Girl(table);
+							} else {
+								senderr('data_err1');
+							}
+							break;
+						case 2:	//multiply
+							//TODO
+							senderr('not_implemented_err');
+							break;
+						case 3:	//wuxing
+							senderr('cannot_use_item_err');
+							break;
+					}
+				}));
+			});
+			break;
 		case 'buyitem':
 			//@cmd buyitem
 			//@data shopid
