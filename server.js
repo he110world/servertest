@@ -22,6 +22,7 @@ var adminsub = redis.createClient();
 var db = redis.createClient();
 var table = require('./table.json');
 var Role = require('./role');
+var Girl = require('./girl');
 var GIRL_PRICE = 100;
 
 console.log("Server started");
@@ -779,9 +780,11 @@ wss.on('connection', function(ws) {
 									}));
 								} else {
 									db.sadd('girls:'+userid, girl.ID, check(function(){
-										db.hmset('girl:'+userid+':'+girl.ID, girl, check(function(){
+										var newGirl = new Girl(table);
+										newGirl.newGirl(girl.ID);
+										db.hmset('girl:'+userid+':'+girl.ID, newGirl, check(function(){
 											var girldata = {};
-											girldata[girl.ID] = girl;
+											girldata[girl.ID] = newGirl;
 											sendobj({girl:girldata});
 										}));
 									}));
@@ -839,16 +842,7 @@ wss.on('connection', function(ws) {
 				switch (viewname) {
 					case 'role':
 						db.hgetall('role:'+id, check2(function(role){
-							if (role) {
-								sendobj({role:role});
-							} else {
-								// create role
-								var newRole = new Role();
-								newRole.newRole();
-								db.hmset('role:'+id, newRole, check(function(data){
-									sendobj({role:newRole});
-								}));
-							}
+							sendobj({role:role});
 						}));
 						break;
 					case 'girl':
@@ -910,7 +904,7 @@ wss.on('connection', function(ws) {
 						db.set('account:'+user+':id', userid, check2(function(){
 							// create role
 							var newRole = new Role();
-							newRole.newRole();
+							newRole.newRole(userid);
 							db.hmset('role:'+userid, newRole, check(function(){
 								sendnil();
 							}));
