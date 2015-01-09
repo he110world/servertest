@@ -10,7 +10,6 @@ for (var i in obj) {
 	var sheet = obj[i];
 
 	if (sheet.name == 'exp') {	// exp table is different
-//		continue;
 		// exp structure:
 		// exp : {
 		//		Lv : [...]
