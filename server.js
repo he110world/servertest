@@ -21,6 +21,7 @@ var roomsub = redis.createClient();
 var adminsub = redis.createClient();
 var db = redis.createClient();
 var table = require('./table.json');
+var Role = require('./role');
 var GIRL_PRICE = 100;
 
 console.log("Server started");
@@ -333,9 +334,14 @@ wss.on('connection', function(ws) {
 
 		switch(msg.cmd) {
 		case 'echo': 
+			//@cmd echo
+			//@nosession
+			//@desc 返回客户端发送的数据
 			sendobj(msg.data);
 			break;
 		case 'makeroom':
+			//@cmd makeroom
+			//@desc 开房间
 			getuser(function(user){
 				db.exists('roomid:'+user, check(function(exist){
 					if (exist) {
@@ -356,6 +362,9 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'joinroom':
+			//@cmd joinroom
+			//@data roomid
+			//@desc 加入现有房间
 			getuser(function(user){
 				db.exists('roomid:'+user, check(function(exist){
 					if (exist) {
@@ -388,9 +397,13 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'randroom':
+			//@cmd randroom
+			//@desc 加入随机房间（TODO）
 			senderr('not_implemented_err');
 			break;
 		case 'quitroom':
+			//@cmd quitroom
+			//@desc 退出当前房间
 			getuser(function(user){
 				db.get('roomid:'+user, check2(function(roomid){
 					db.llen('room:'+roomid, check(function(len){
@@ -416,6 +429,9 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'roomchat':
+			//@cmd roomchat
+			//@data msg
+			//@desc 房间内聊天
 			getuser(function(user){
 				db.get('roomid:'+user, check2(function(roomid){
 					roommsg(roomid, 'chat', {user:user, msg:msg.data.msg});
@@ -430,6 +446,9 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'rename':
+			//@cmd rename
+			//@data nickname
+			//@desc 更改昵称
 			try {
 				var newname = msg.data.nickname;
 			} catch (e) {
@@ -449,10 +468,60 @@ wss.on('connection', function(ws) {
 				});
 			}
 			break;
+		case 'ADD_RoleExp':
+			//@cmd ADD_RoleExp
+			//@data count
+			//@desc 加角色经验
+			try {
+				var expinc = parseInt(msg.data.count);
+				if (isNaN(expinc)) {
+					throw new Error('data_err'); 
+				}
+			} catch (e) {
+				senderr('data_err:count');
+				console.log(e);
+				return;
+			}
+				
+			getuser(function(user, userid){
+				//we need Lv & RoleExp
+				var query = ['Lv', 'RoleExp'];
+				db.hmget('role:'+userid, query, check2(function(data){
+					if (data.length < query.length) {
+						senderr('db_err');
+					} else {
+						var role = new Role(table);
+						console.log(data);
+						role.Lv = data[0];
+						role.RoleExp = data[1];
+						try {
+							var mod = role.addExp(expinc);
+							db.hmset('role:'+userid, mod, check(function(){
+								sendobj({role:mod});
+							}));
+						} catch (e) {
+							senderr('role_err');
+						}
+					}
+				}));
+			});
+			break;
 		case 'ADD_PhotonSeed':
+			//@cmd ADD_PhotonSeed
+			//@data count
+			//@desc 加光粒子结晶
 		case 'ADD_Credit':
+			//@cmd ADD_Credit
+			//@data count
+			//@desc 加游戏币
 		case 'ADD_FriendCoin':
+			//@cmd ADD_FriendCoin
+			//@data count
+			//@desc 加绊金币
 		case 'ADD_OddCoin':
+			//@cmd ADD_OddCoin
+			//@data count
+			//@desc 加欠片
 			try {
 				var money = msg.cmd.split('_')[1];
 				getuser(function(user, userid){
@@ -468,10 +537,14 @@ wss.on('connection', function(ws) {
 					}));
 				});
 			} catch (e) {
-
+				senderr('data_err:count');
 			}
 			break;
 		case 'ADD_Item':
+			//@cmd ADD_Item
+			//@data id
+			//@data count
+			//@desc 加物品
 			getuser(function(user, userid){
 				try {
 					var itemid = msg.data.id;
@@ -480,10 +553,15 @@ wss.on('connection', function(ws) {
 						sendnil();
 					}));
 				} catch (e) {
+					senderr('data_err:id,count');
 				}
 			});
 			break;
 		case 'requestfriend':
+			//@cmd requestfriend
+			//@data target
+			//@desc 求加好友（target暂时为好友用户名）
+			//
 			// <user> -> pendingfriends:<target>
 			// tell target
 			getuser(function(user, userid){
@@ -497,11 +575,15 @@ wss.on('connection', function(ws) {
 						notifymsg(target, {cmd:"view", data:data});
 					}));
 				} catch (e) {
-					senderr('data_err');
+					senderr('data_err:target');
 				}
 			});
 			break;
 		case 'delfriend':
+			//@cmd delfriend
+			//@data target
+			//@desc 删除好友
+			//
 			// friends:<user> -remove-> <target>
 			// friends:<target> -remove-> <user>
 			// tell self
@@ -523,11 +605,15 @@ wss.on('connection', function(ws) {
 						}));
 					}));
 				} catch (e) {
-					senderr('data_err');
+					senderr('data_err:target');
 				}
 			});
 			break;
 		case 'acceptfriend':
+			//@cmd acceptfriend
+			//@data target
+			//@desc 接受好友请求
+			//
 			// pendingfriends:<user> -remove-> <target>
 			// <target> -> friends:<user>
 			// <user> -> friends:<target>
@@ -553,12 +639,16 @@ wss.on('connection', function(ws) {
 						}));
 					}));
 				} catch (e) {
-					senderr('data_err');
+					senderr('data_err:target');
 				}
 			});
 			break;
 		case 'declinefriend':
-			// pendingfriends:<userid> -remove-> <targetid>
+			//@cmd declinefriend
+			//@data target
+			//@desc 拒绝好友请求
+			//
+			// pendingfriends:<user> -remove-> <target>
 			getuser(function(user, userid){
 				try {
 					var target = msg.data.target;
@@ -569,11 +659,15 @@ wss.on('connection', function(ws) {
 						sendobj(userdata);
 					}));
 				} catch (e) {
-					senderr('data_err');
+					senderr('data_err,target');
 				}
 			});
 			break;
 		case 'buyitem':
+			//@cmd buyitem
+			//@data shopid
+			//@data itemid
+			//@desc 买物品
 			getuser(function(user, userid){
 				// cost
 				try {
@@ -611,11 +705,14 @@ wss.on('connection', function(ws) {
 					}));
 
 				} catch (e) {
-					senderr('data_err');
+					senderr('data_err:shopid,itemid');
 				}
 			});
 			break;
 		case 'buygirl':
+			//@cmd buygirl
+			//@data item
+			//@desc 姬娘扭蛋（item格式为{id1:count，...，idN:count}）
 			getuser(function(user, userid){
 				// cost
 				db.hget('role:'+userid, 'PhotonSeed', check(function(photon){
@@ -734,27 +831,21 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'view':
+			//@cmd view
+			//@data name
+			//@data id
+			//@desc 查看数据：role，girl，room，item，friends，pendingfriends（只有girl需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				switch (viewname) {
 					case 'role':
-						db.hgetall('role:'+id, check(function(role){
+						db.hgetall('role:'+id, check2(function(role){
 							if (role) {
 								sendobj({role:role});
 							} else {
 								// create role
-								var newRole = {
-									level:1, 
-									exp:0, 
-									nickname:'', 
-									id:id, 
-									Credit:0, 
-									PhotonSeed:0,
-									FriendCoin:0,
-									OddCoin:0,
-									cost:0, 
-									redeem:''
-								};
+								var newRole = new Role();
+								newRole.newRole();
 								db.hmset('role:'+id, newRole, check(function(data){
 									sendobj({role:newRole});
 								}));
@@ -801,6 +892,11 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'reg':
+			//@cmd reg
+			//@data user
+			//@data pass
+			//@nosession
+			//@desc 注册用户
 			var user = msg.data.user;
 			var pass = msg.data.pass;
 			if (!pass) {
@@ -811,14 +907,25 @@ wss.on('connection', function(ws) {
 					.incr('next_account_id')
 					.set('user:'+user, pass)
 					.exec(check(function(res){
-						db.set('account:'+user+':id', res[0], check2(function(){
-							sendnil();
+						var userid = res[0];
+						db.set('account:'+user+':id', userid, check2(function(){
+							// create role
+							var newRole = new Role();
+							newRole.newRole();
+							db.hmset('role:'+userid, newRole, check(function(){
+								sendnil();
+							}));
 						}));
 					}));
 				}));
 			}
 			break;
 		case 'login':
+			//@cmd login
+			//@data user
+			//@data pass
+			//@nosession
+			//@desc 登录
 			try {
 				var user = msg.data.user;
 				var pass = msg.data.pass;
@@ -876,7 +983,7 @@ wss.on('connection', function(ws) {
 			}));
 			break;
 		}
-    	});
+	});
 });
 
 wss.broadcast = function broadcast(data) {
