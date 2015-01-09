@@ -1,19 +1,19 @@
-var util = require('./util');
+var Util = require('./util');
 
+// cannot use something like: table = require('./table.json'), since table.json make be updated.
 function Girl(table) {
 	if (table) {
 		this.table = table;
 	}
 }
 
-Girl.prototype.newGirl = function (id) {
-	this.checkVar('table');
+Girl.prototype.newGirl = function (id, table) {
 	this.ID = id;
   	this.Lv = 1;
 	this.GirlExp = 0;
 	this.RankExp = 0;
 
-	var girl = this.table.girl[id];
+	var girl = table.girl[id];
 	this.Cost = girl.Cost;
 	this.Rank = girl.Rank;
 }
@@ -33,7 +33,7 @@ Girl.prototype.addRankExp = function (expInc) {
 	var rank = Math.floor(this.Rank);
 	var rankLimit = this.table.exp.Rank.length - 1;
 	var newExp = Math.floor(this.RankExp) + Math.floor(expInc);
-	var ret = util.updateLevel(newExp, rank, rankLimit, this.table.exp.RankExp);
+	var ret = Util.updateLevel(newExp, rank, rankLimit, this.table.exp.RankExp);
 	rank = ret[0];
 	newExp = ret[1];
 	if (rank != this.Rank) {
@@ -52,7 +52,7 @@ Girl.prototype.addExp = function (expInc) {
 	var Rank = Math.floor(this.Rank);
 	var LvLimit = Math.floor(this.table.exp.LvLimit[Rank]);
 	var newExp = Math.floor(this.GirlExp) + Math.floor(expInc);
-	var ret = util.updateLevel(newExp, Lv, LvLimit, this.table.exp.GirlExp);
+	var ret = Util.updateLevel(newExp, Lv, LvLimit, this.table.exp.GirlExp);
 	Lv = ret[0];
 	newExp = ret[1];
 	if (Lv != this.Lv) {

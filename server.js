@@ -469,6 +469,48 @@ wss.on('connection', function(ws) {
 				});
 			}
 			break;
+		case 'ADD_GirlExp':
+			//@cmd ADD_GirlExp
+			//@data id
+			//@data count
+			//@desc 加战姬经验
+			try {
+				var girlid = msg.data.id;
+				var expinc = parseInt(msg.data.count);
+				if (isNaN(expinc)) {
+					throw new Error('data_err'); 
+				}
+				getuser(function(user, userid){
+					var query = ['Lv', 'GirlExp', 'Rank'];
+					var girlkey = 'girl:'+userid+':'+girlid;
+					db.hmget(girlkey, query, check2(function(data){
+						if (data.length != query.length) {
+							senderr('db_err');
+						} else {
+							var girl = new Girl(table);
+							girl.Lv = data[0];
+							girl.GirlExp = data[1];
+							girl.Rank = data[2];
+							try {
+								var mod = girl.addExp(expinc);
+								db.hmset(girlkey, mod, check(function(){
+									var girldata = {};
+									girldata[girlid] = mod;
+									sendobj({girl:girldata});
+								}));
+							} catch (e) {
+								senderr('girl_err');
+							}
+						}
+					}));
+				});
+			} catch (e) {
+				senderr('data_err:id,count');
+				console.log(e);
+				return;
+			}
+
+			break;
 		case 'ADD_RoleExp':
 			//@cmd ADD_RoleExp
 			//@data count
@@ -780,8 +822,8 @@ wss.on('connection', function(ws) {
 									}));
 								} else {
 									db.sadd('girls:'+userid, girl.ID, check(function(){
-										var newGirl = new Girl(table);
-										newGirl.newGirl(girl.ID);
+										var newGirl = new Girl();
+										newGirl.newGirl(girl.ID, table);
 										db.hmset('girl:'+userid+':'+girl.ID, newGirl, check(function(){
 											var girldata = {};
 											girldata[girl.ID] = newGirl;

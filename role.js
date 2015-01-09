@@ -1,10 +1,13 @@
+var Util = require('./util');
+
 function Role(table) {
 	if (table) {
 		this.table = table;
 	}
 }
 
-Role.prototype.newRole = function () {
+Role.prototype.newRole = function (id) {
+	this.ID = id;
   	this.Lv = 1;
 	this.RoleExp = 0;
 	this.Credit = 0;
@@ -28,6 +31,9 @@ Role.prototype.addExp = function (expInc) {
 	var mod = {};
 	var Lv = Math.floor(this.Lv);
 	var newExp = Math.floor(this.RoleExp) + Math.floor(expInc);
+	var ret = Util.updateLevel(newExp, Lv, 999, this.table.exp.RoleExp, 1);
+
+	/*
 	while (Lv<=999) {
 		var lvUpExp = Math.floor(this.table.exp.RoleExp[Lv+1]);
 		if (newExp >= lvUpExp) {
@@ -42,6 +48,10 @@ Role.prototype.addExp = function (expInc) {
 			break;
 		}
 	}
+	*/
+
+	Lv = ret[0];
+	newExp = ret[1];
 	if (Lv != this.Lv) {
 		mod.Lv = Lv;
 	}
