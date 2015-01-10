@@ -495,8 +495,8 @@ wss.on('connection', function(ws) {
 								var mod = girl.addExp(expinc);
 								db.hmset(girlkey, mod, check(function(){
 									var girldata = {};
-									girldata[girlid] = mod;
-									sendobj({girl:girldata});
+									girldata['girl.'+girlid] = mod;
+									sendobj(girldata);
 								}));
 							} catch (e) {
 								senderr('girl_err');
@@ -745,7 +745,10 @@ wss.on('connection', function(ws) {
 												itemdata[itemid] = res[1];
 												var girldata = {};
 												girldata[girlid] = modgirl;
-												sendobj({girl:girldata, item:itemdata});
+												var obj = {};
+												obj['girl.'+girlid] = modgirl;
+												obj.item = itemdata;
+												sendobj(obj);
 											}));
 										} catch (e) {
 											senderr('data_err');
@@ -888,9 +891,12 @@ wss.on('connection', function(ws) {
 										var newGirl = new Girl();
 										newGirl.newGirl(girl.ID, table);
 										db.hmset('girl:'+userid+':'+girl.ID, newGirl, check(function(){
-											var girldata = {};
-											girldata[girl.ID] = newGirl;
-											sendobj({girl:girldata});
+											db.smembers('girls:'+userid, check2(function(girls){
+												var girldata = {};
+												girldata['girl.'+girl.ID] = newGirl;
+												girldata.girls = girls;
+												sendobj(girldata);
+											}));
 										}));
 									}));
 								}
@@ -941,7 +947,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role，girl，room，item，girls, friends，pendingfriends（只有girl需要用到id）
+			//@desc 查看数据：role，girl，room，items，girls, friends，pendingfriends（只有girl需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				switch (viewname) {
@@ -953,8 +959,8 @@ wss.on('connection', function(ws) {
 					case 'girl':
 						db.hgetall('girl:'+id+':'+msg.data.id, check2(function(girl){
 							var girldata = {};
-							girldata[girl.ID] = girl;
-							sendobj({girl:girldata});
+							girldata['girl.'+girl.ID] = girl;
+							sendobj(girldata);
 						}));
 						break;
 					case 'girls':
@@ -973,7 +979,7 @@ wss.on('connection', function(ws) {
 							}
 						}));
 						break;
-					case 'item':
+					case 'items':
 						db.hgetall('item:'+id, check2(function(item){
 							sendobj({item:item});
 						}));
