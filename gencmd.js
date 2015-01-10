@@ -13,10 +13,8 @@ var tags = ['cmd', 'data', 'nosession', 'desc'];
 
 function CmdObj () {
 }
+
 CmdObj.prototype.generate = function () {
-	if (!this.cmd) {
-		return '';
-	}
 	var out = this.cmd + ',{';
 	var num = 0;
 	out += '"cmd":"' + this.cmd + '"';
@@ -43,6 +41,10 @@ CmdObj.prototype.generate = function () {
 
 for (var i in lines) {
 	var line = lines[i];
+	if (!line) {
+		continue;
+	}
+
 	var pos;
 	for (var t in tags) {
 		var tag = tags[t];
@@ -68,6 +70,9 @@ for (var i in lines) {
 			currobj[tag] = data;
 		}
 	}
+}
+if (currobj) {
+	cmdlist.push(currobj);
 }
 
 var outstr = 'id,cmd,desc\n';

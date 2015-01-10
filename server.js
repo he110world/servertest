@@ -941,7 +941,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role，girl，room，item，friends，pendingfriends（只有girl需要用到id）
+			//@desc 查看数据：role，girl，room，item，girls, friends，pendingfriends（只有girl需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				switch (viewname) {
@@ -955,6 +955,11 @@ wss.on('connection', function(ws) {
 							var girldata = {};
 							girldata[girl.ID] = girl;
 							sendobj({girl:girldata});
+						}));
+						break;
+					case 'girls':
+						db.smembers('girls:'+id, check2(function(girls){
+							sendobj({girls:girls});
 						}));
 						break;
 					case 'room':
@@ -977,12 +982,14 @@ wss.on('connection', function(ws) {
 					case 'pendingfriends':
 						db.smembers(viewname+':'+user, check(function(friendset){
 							// convert array to obj
+							/*
 							var friends = {};
 							for (var i in friendset) {
 								friends[friendset[i]] = 1;
 							}
 							var userdata = {};
-							userdata[viewname] = friends;
+							*/
+							userdata[viewname] = friendset; //friends;
 							sendobj(userdata);
 						}));
 						break;
