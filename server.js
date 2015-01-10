@@ -833,7 +833,7 @@ wss.on('connection', function(ws) {
 		case 'buygirl':
 			//@cmd buygirl
 			//@data item
-			//@desc 姬娘扭蛋（item格式为{id1:count，...，idN:count}）
+			//@desc 姬娘扭蛋（item格式为{id1:count...idN:count}）
 			getuser(function(user, userid){
 				// cost
 				var mod = {};
@@ -947,7 +947,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role，girl，room，items，girls, friends，pendingfriends（只有girl需要用到id）
+			//@desc 查看数据：role girl room items girls friends pendingfriends（只有girl需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				switch (viewname) {
