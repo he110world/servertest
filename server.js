@@ -69,6 +69,11 @@ function responseData (ws, cmd, data, id) {
 	}
 }
 
+function responseDataAndResult (ws, cmd, data, res, id) {
+	response(ws, 'view', data);
+	response(ws, cmd, res, id);
+}
+
 function publishData (pub, channel, data) {
 	pub.publish(channel, JSON.stringify(data));
 }
@@ -327,6 +332,10 @@ wss.on('connection', function(ws) {
 
 		function sendobj (data) {
 			responseData(ws, msg.cmd, data, msg.id);
+		}
+
+		function sendobjres (data, res) {
+			responseDataAndResult(ws, msg.cmd, data, res, msg.id);
 		}
 
 		function sendnil () {
@@ -823,121 +832,130 @@ wss.on('connection', function(ws) {
 			//@desc 姬娘扭蛋（item格式为{id1:count，...，idN:count}）
 			getuser(function(user, userid){
 				// cost
+				var mod = {};
 				db.hget('role:'+userid, 'PhotonSeed', check(function(photon){
 					if (photon < GIRL_PRICE) {
 						senderr('not_enough_photon_err');
 					} else {
-						// used items
-						try {
-							var itemcounts = msg.data.item;
-						} catch (e) {
-							itemcounts = null;
-						}
-						var odds = [20, 20, 20, 20, 20];
-						var dobuy = function () {
-							// which wuxing?
-							var rand = Math.floor(Math.random()*100);
-							for (var wx=0; wx<5; wx++) {
-								rand -= odds[wx];
-								if (rand<0) {
-									break;
-								}
-							}
-							wx += 1;
+						var newphoton = photon-GIRL_PRICE;
+						db.hset('role:'+userid, 'PhotonSeed', newphoton, check(function(){
+							mod.role = {PhotonSeed:newphoton};
 
-							// rare
-							// 4: 1.5%
-							// 3: 28.5%
-							// 2: 70%
-							rand = Math.random()*100;
-							var rare = 1;
-							if (rand < 1.5) {
-								rare = 4;
-							} else if (rand < 28.5) {
-								rare = 3;
-							} else {
-								rare = 2;
+							// used items
+							try {
+								var itemcounts = msg.data.item;
+							} catch (e) {
+								itemcounts = null;
 							}
-
-							// find all suitable girls 
-							var wxgirls = [];
-							var matchgirls = [];
-							for (var g in table.girl) {
-								if (table.girl[g].Wuxing == wx) {
-									wxgirls.push(table.girl[g]);
-									if (table.girl[g].Rare == rare) {
-										matchgirls.push(table.girl[g]);
+							var odds = [20, 20, 20, 20, 20];
+							var dobuy = function () {
+								// which wuxing?
+								var rand = Math.floor(Math.random()*100);
+								for (var wx=0; wx<5; wx++) {
+									rand -= odds[wx];
+									if (rand<0) {
+										break;
 									}
 								}
-							}
+								wx += 1;
 
-							if (matchgirls.length > 0) {	// found
-								var girl = matchgirls[Math.floor(Math.random()*matchgirls.length)];
-							} else {
-								var girl = wxgirls[Math.floor(Math.random()*matchgirls.length)];
-							}
-							// already exist?
-							db.sismember('girls:'+userid, girl.ID, check(function(exist){
-								if (exist) {
-									// convert to medal
-									var medalid = 12000 + rare;
-									db.hincrby('item:'+userid, medalid, 10, check(function(count){
-										var itemdata = {};
-										itemdata[medalid] = count;
-										sendobj({item:itemdata});
-									}));
+								// rare
+								// 4: 1.5%
+								// 3: 28.5%
+								// 2: 70%
+								rand = Math.random()*100;
+								var rare = 1;
+								if (rand < 1.5) {
+									rare = 4;
+								} else if (rand < 28.5) {
+									rare = 3;
 								} else {
-									db.sadd('girls:'+userid, girl.ID, check(function(){
-										var newGirl = new Girl();
-										newGirl.newGirl(girl.ID, table);
-										db.hmset('girl:'+userid+':'+girl.ID, newGirl, check(function(){
-											db.smembers('girls:'+userid, check2(function(girls){
-												var girldata = {};
-												girldata['girl.'+girl.ID] = newGirl;
-												girldata.girls = girls;
-												sendobj(girldata);
-											}));
-										}));
-									}));
+									rare = 2;
 								}
-							}));
-						}
-						if (itemcounts) {
-							var idlist = [];
-							for (var itemid in itemcounts) {
-								idlist.push(itemid);
-							}
-							db.hmget('item:'+userid, idlist, check(function(countlist){
-								for (var i in idlist) {
-									var id = idlist[i];
-									var cost = itemcounts[id];
-									if (cost > countlist[i]) {
-										senderr('not_enough_item_err');
-										return;
-									} else {
-										itemcounts[id] = countlist[i] - cost;
-										var effect = table.item[id].Effect;
-										if ( effect >= 5 && effect <= 9) {
-											var effval = table.item[id].EffectValue;
-											var incdec = effval.split('$');
-											for (var j=0; j<5; j++) {
-												if (j == effect-5) {
-													odds[j] += incdec[0];
-												} else {
-													odds[j] -= incdec[1];
-												}
-											}											
+
+								// find all suitable girls 
+								var wxgirls = [];
+								var matchgirls = [];
+								for (var g in table.girl) {
+									if (table.girl[g].Wuxing == wx) {
+										wxgirls.push(table.girl[g]);
+										if (table.girl[g].Rare == rare) {
+											matchgirls.push(table.girl[g]);
 										}
 									}
 								}
 
-								db.hmset('item:'+userid, itemcounts, check(function(){
-									dobuy();
+								if (matchgirls.length > 0) {	// found
+									var girl = matchgirls[Math.floor(Math.random()*matchgirls.length)];
+								} else {
+									var girl = wxgirls[Math.floor(Math.random()*matchgirls.length)];
+								}
+								// already exist?
+								db.sismember('girls:'+userid, girl.ID, check(function(exist){
+									if (exist) {
+										// convert to medal
+										var medalid = 12000 + rare;
+										db.hincrby('item:'+userid, medalid, 10, check(function(count){
+											var itemdata = mod.item || {};
+											itemdata[medalid] = count;
+											mod.item = itemdata;
+											var medaldata = {};
+											medaldata[medalid] = count;
+											sendobjres(mod, {item:medaldata});
+										}));
+									} else {
+										db.sadd('girls:'+userid, girl.ID, check(function(){
+											var newGirl = new Girl();
+											newGirl.newGirl(girl.ID, table);
+											db.hmset('girl:'+userid+':'+girl.ID, newGirl, check(function(){
+												db.smembers('girls:'+userid, check2(function(girls){
+													mod['girl.'+girl.ID] = newGirl;
+													mod.girls = girls;
+													sendobjres(mod, {girl:girl.ID});
+												}));
+											}));
+										}));
+									}
 								}));
-							}));
-						} else {
-							dobuy();
-						}
+							}
+							if (itemcounts) {
+								var idlist = [];
+								for (var itemid in itemcounts) {
+									idlist.push(itemid);
+								}
+								db.hmget('item:'+userid, idlist, check(function(countlist){
+									for (var i in idlist) {
+										var id = idlist[i];
+										var cost = itemcounts[id];
+										if (cost > countlist[i]) {
+											senderr('not_enough_item_err');
+											return;
+										} else {
+											itemcounts[id] = countlist[i] - cost;
+											var effect = table.item[id].Effect;
+											if ( effect >= 5 && effect <= 9) {
+												var effval = table.item[id].EffectValue;
+												var incdec = effval.split('$');
+												for (var j=0; j<5; j++) {
+													if (j == effect-5) {
+														odds[j] += incdec[0];
+													} else {
+														odds[j] -= incdec[1];
+													}
+												}											
+											}
+										}
+									}
+
+									db.hmset('item:'+userid, itemcounts, check(function(){
+										mod.item = itemcounts;
+										dobuy();
+									}));
+								}));
+							} else {
+								dobuy();
+							}
+						}));
 					}
 				}));
 				// random
@@ -979,22 +997,19 @@ wss.on('connection', function(ws) {
 							}
 						}));
 						break;
-					case 'items':
-						db.hgetall('item:'+id, check2(function(item){
-							sendobj({item:item});
+					case 'item':
+						db.hgetall('item:'+id, check(function(item){
+							if (!item) {
+								sendobj({item:{}});
+							} else {
+								sendobj({item:item});
+							}
 						}));
 						break;
 					case 'friends':
 					case 'pendingfriends':
 						db.smembers(viewname+':'+user, check(function(friendset){
-							// convert array to obj
-							/*
-							var friends = {};
-							for (var i in friendset) {
-								friends[friendset[i]] = 1;
-							}
 							var userdata = {};
-							*/
 							userdata[viewname] = friendset; //friends;
 							sendobj(userdata);
 						}));
