@@ -880,7 +880,7 @@ wss.on('connection', function(ws) {
 										sendobjres(mod, {item:clientdata, girl:girlid, role:{OddCoin:ODD_COIN}});
 									}));
 								} else {
-									newGirl.newGirl(girlid, table);
+									newGirl.newGirl(table, girlid);
 									db.multi()
 									.hset('role:'+userid, 'PhotonSeed', newphoton)
 									.hincrby('role:'+userid, 'OddCoin', ODD_COIN)

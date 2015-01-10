@@ -7,7 +7,7 @@ function Girl(table) {
 	}
 }
 
-Girl.prototype.newGirl = function (id, table) {
+Girl.prototype.newGirl = function (table, id) {
 	this.ID = id;
   	this.Lv = 1;
 	this.GirlExp = 0;
