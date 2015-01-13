@@ -21,6 +21,7 @@ var roomsub = redis.createClient();
 var adminsub = redis.createClient();
 var db = redis.createClient();
 var table = require('./table.json');
+var Transaction = require('./transaction');
 var Role = require('./role');
 var Girl = require('./girl');
 var GIRL_PRICE = 100;
@@ -58,20 +59,6 @@ function responseErr (ws, cmd, err, id) {
 		resp.id = id;
 	}
 	ws.send(JSON.stringify(resp));
-}
-
-function responseData (ws, cmd, data, id) {
-	if (cmd != 'view') {
-		response(ws, 'view', data);
-		response(ws, cmd, '', id);
-	} else {
-		response(ws, 'view', data, id);
-	}
-}
-
-function responseDataAndResult (ws, cmd, data, res, id) {
-	response(ws, 'view', data);
-	response(ws, cmd, res, id);
 }
 
 function publishData (pub, channel, data) {
@@ -308,6 +295,18 @@ wss.on('connection', function(ws) {
 			}
 		}
 
+		function checklist (len, cb) {
+			return function (err, data) {
+				if (err || !data || data.length!=len) {
+					responseErr(ws, msg.cmd, 'db_err', msg.id);
+				} else {
+					if (typeof cb == 'function') {
+						cb(data);
+					}
+				}
+			}
+		}
+
 		function check2err (errmsg, cb) {
 			return function (err, data) {
 				if (err) {
@@ -331,11 +330,7 @@ wss.on('connection', function(ws) {
 		}
 
 		function sendobj (data) {
-			responseData(ws, msg.cmd, data, msg.id);
-		}
-
-		function sendobjres (data, res) {
-			responseDataAndResult(ws, msg.cmd, data, res, msg.id);
+			response(ws, msg.cmd, data, msg.id);
 		}
 
 		function sendnil () {
@@ -366,7 +361,7 @@ wss.on('connection', function(ws) {
 							.multi()
 							.set('roomid:'+user, newid)
 							.lpush('room:'+newid, user)
-							.exec(check(function(data){
+							.exec(checklist(2,function(data){
 								addRoomUser(newid, user);
 								sendobj({room:{roomid:newid, users:[user]}});
 							}));
@@ -425,7 +420,7 @@ wss.on('connection', function(ws) {
 							db.multi()
 							.del('room:'+roomid)
 							.del('roomid:'+user)
-							.exec(check(function(){
+							.exec(checklist(2,function(){
 							roommsg(roomid, 'kill');
 								sendobj({room:null});
 							}));
@@ -433,7 +428,7 @@ wss.on('connection', function(ws) {
 							db.multi()
 							.del('roomid:'+user)
 							.lrem('room:'+roomid, 1, user)
-							.exec(check(function(){
+							.exec(checklist(2,function(){
 							roommsg(roomid, 'quit', {user:user});
 								delRoomUser(roomid, user);
 							}));
@@ -471,11 +466,11 @@ wss.on('connection', function(ws) {
 			if (!newname) {
 				senderr('nick_null_err');
 			} else {
-				getuser(function(user, userid) {
+				getuser(function(user, uid) {
 					// name already exists?
 					// DON'T use SISMEMBER + SADD: ismember和add之间其他玩家可以进行操作
 					db.sadd('nicknames', newname, check2err('nick_exist_err',function(){
-						db.hset('role:'+userid, 'nickname', newname, check(function(res){
+						db.hset('role:'+uid, 'nickname', newname, check(function(res){
 							sendobj({role:{nickname:newname}});
 						}));
 					}));
@@ -493,9 +488,9 @@ wss.on('connection', function(ws) {
 				if (isNaN(expinc)) {
 					throw new Error('data_err'); 
 				}
-				getuser(function(user, userid){
+				getuser(function(user, uid){
 					var query = ['Lv', 'GirlExp', 'Rank'];
-					var girlkey = 'girl:'+userid+':'+girlid;
+					var girlkey = 'girl.'+girlid+':'+uid;
 					db.hmget(girlkey, query, check2(function(data){
 						if (data.length != query.length) {
 							senderr('db_err');
@@ -506,10 +501,9 @@ wss.on('connection', function(ws) {
 							girl.Rank = data[2];
 							try {
 								var mod = girl.addExp(expinc);
-								db.hmset(girlkey, mod, check(function(){
-									var girldata = {};
-									girldata['girl.'+girlid] = mod;
-									sendobj(girldata);
+								var trans = new Transaction(db, uid);
+								trans.hmset('girl.'+girlid, mod, check(function(){
+									sendobj(trans.obj);
 								}));
 							} catch (e) {
 								senderr('girl_err');
@@ -539,10 +533,11 @@ wss.on('connection', function(ws) {
 				return;
 			}
 				
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				//we need Lv & RoleExp
 				var query = ['Lv', 'RoleExp'];
-				db.hmget('role:'+userid, query, check2(function(data){
+				var trans = new Transaction(db, uid);
+				db.hmget('role:'+uid, query, check2(function(data){
 					if (data.length < query.length) {
 						senderr('db_err');
 					} else {
@@ -551,8 +546,8 @@ wss.on('connection', function(ws) {
 						role.RoleExp = data[1];
 						try {
 							var mod = role.addExp(expinc);
-							db.hmset('role:'+userid, mod, check(function(){
-								sendobj({role:mod});
+							trans.hmset('role', mod, check(function(){
+								sendobj(trans.obj);
 							}));
 						} catch (e) {
 							senderr('role_err');
@@ -579,16 +574,15 @@ wss.on('connection', function(ws) {
 			//@desc 加欠片
 			try {
 				var money = msg.cmd.split('_')[1];
-				getuser(function(user, userid){
+				getuser(function(user, uid){
 					try {
 						var count = msg.data.count;
 					} catch(e) {
 						count = 100;
 					}
-					db.hincrby('role:'+userid, money, count, check(function(newcount){
-						var role = {};
-						role[money] = newcount;
-						sendobj({role:role});
+					var trans = new Transaction(db, uid);
+					trans.hincrby('role', money, count, check(function(newcount){
+						sendobj(trans.obj);
 					}));
 				});
 			} catch (e) {
@@ -600,12 +594,13 @@ wss.on('connection', function(ws) {
 			//@data id
 			//@data count
 			//@desc 加物品
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				try {
 					var itemid = msg.data.id;
 					var count = msg.data.count;
-					db.hincrby('item:'+userid, itemid, count, check(function(){
-						sendnil();
+					var trans = new Transaction(db, uid);
+					trans.hincrby('item', itemid, count, check(function(){
+						sendobj(trans.obj);
 					}));
 				} catch (e) {
 					senderr('data_err:id,count');
@@ -619,7 +614,7 @@ wss.on('connection', function(ws) {
 			//
 			// <user> -> pendingfriends:<target>
 			// tell target
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
 					db.sadd('pendingfriends:'+target, user, check(function(){
@@ -643,7 +638,7 @@ wss.on('connection', function(ws) {
 			// friends:<target> -remove-> <user>
 			// tell self
 			// tell target
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
 					db.srem('friends:'+user, target, check2(function(){
@@ -673,7 +668,7 @@ wss.on('connection', function(ws) {
 			// <target> -> friends:<user>
 			// <user> -> friends:<target>
 			// tell target
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
 					db.srem('pendingfriends:'+user, target, check2(function(){
@@ -704,7 +699,7 @@ wss.on('connection', function(ws) {
 			//@desc 拒绝好友请求
 			//
 			// pendingfriends:<user> -remove-> <target>
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
 					db.srem('pendingfriends:'+user, target, check2(function(){
@@ -723,7 +718,7 @@ wss.on('connection', function(ws) {
 			//@data itemid
 			//@data targetid
 			//@desc 使用物品(targetid可以是girl的id之类的值)
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				try {
 					var itemid = msg.data.itemid;
 					var item = table.item[itemid];
@@ -734,13 +729,13 @@ wss.on('connection', function(ws) {
 					senderr('data_err,itemid');
 					return;
 				}
-				var itemkey = 'item:'+userid;
+				var itemkey = 'item:'+uid;
 				db.hget(itemkey, itemid, check2err('no_item_err', function(count){
 					switch (item.Type) {
 						case 1:	//medal
 							if (item.Effect == 1 && girlid) {
 								var query = ['Rank', 'RankExp'];
-								var girlkey = 'girl:'+userid+':'+girlid;
+								var girlkey = 'girl.'+girlid+':'+uid;
 								db.hmget(girlkey, query, check2(function(data){
 									if (data.length != query.length) {
 										senderr('db_err');
@@ -750,25 +745,18 @@ wss.on('connection', function(ws) {
 										girl.RankExp = data[1];
 										try {
 											var modgirl = girl.addRankExp(item.EffectValue);
-											db.multi()
-											.hmset(girlkey, modgirl)
-											.hincrby(itemkey, itemid, -1)
-											.exec(check(function(res){
-												var itemdata = {};
-												itemdata[itemid] = res[1];
-												var girldata = {};
-												girldata[girlid] = modgirl;
-												var obj = {};
-												obj['girl.'+girlid] = modgirl;
-												obj.item = itemdata;
-												sendobj(obj);
+											var trans = new Transaction(db, uid);
+											trans.multi()
+											.hmset('girl.'+girlid, modgirl)
+											.hincrby('item', itemid, -1)
+											.exec(checklist(2,function(res){
+												sendobj(trans.obj);
 											}));
 										} catch (e) {
 											senderr('data_err');
 										}
 									}
 								}));
-								var girl = new Girl(table);
 							} else {
 								senderr('data_err1');
 							}
@@ -789,7 +777,7 @@ wss.on('connection', function(ws) {
 			//@data shopid
 			//@data itemid
 			//@desc 买物品
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				// cost
 				try {
 					var shopid = msg.data.shopid;
@@ -807,24 +795,20 @@ wss.on('connection', function(ws) {
 						senderr('wrong_shop_err');
 						return;
 					}
-					db.hget('role:'+userid, money, check(function(count){
+					db.hget('role:'+uid, money, check(function(count){
 						var cost = table.item[itemid][money];
 						if (cost > count) {
 							senderr('not_enough_'+money+'_err');
 						} else {
-							db.hincrby('role:'+userid, money, -cost, check(function(newmoney){
-								db.hincrby('item:'+userid, itemid, 1, check(function(newcount){
-									var obj = {};
-									obj.role = {};
-									obj.role[money] = newmoney;
-									obj.item = {};
-									obj.item[itemid] = newcount;
-									sendobj(obj);
-								}));
+							var trans = new Transaction(db, uid);
+							trans.multi()
+							.hincrby('role', money, -cost)
+							.hincrby('item', itemid, 1)
+							.exec(checklist(2,function(res){
+								sendobj(trans.obj);
 							}));
 						}
 					}));
-
 				} catch (e) {
 					senderr('data_err:shopid,itemid');
 				}
@@ -834,10 +818,10 @@ wss.on('connection', function(ws) {
 			//@cmd buygirl
 			//@data item
 			//@desc 姬娘扭蛋（item格式为{id1:count...idN:count}）
-			getuser(function(user, userid){
+			getuser(function(user, uid){
 				// cost
 				var mod = {};
-				db.hget('role:'+userid, 'PhotonSeed', check(function(photon){
+				db.hget('role:'+uid, 'PhotonSeed', check(function(photon){
 					if (photon < GIRL_PRICE) {
 						senderr('not_enough_PhotonSeed_err');
 					} else {
@@ -851,61 +835,13 @@ wss.on('connection', function(ws) {
 							itemcounts = null;
 						}
 
-						var dobuy = function () {
-							var newGirl = new Girl();
-							var girlid = newGirl.buyGirl(table, itemcounts);
-
-							// already exist?
-							db.sismember('girls:'+userid, girlid, check(function(exist){
-								var newphoton = photon-GIRL_PRICE;
-								var ODD_COIN = 1000;
-								if (exist) {
-									var rare = Math.floor(table.girl[girlid].Rare);
-									var medalid = 12000 + rare;
-									var MEDAL_COUNT = 10;
-									db.multi()
-									.hset('role:'+userid, 'PhotonSeed', newphoton)
-									.hincrby('role:'+userid, 'OddCoin', ODD_COIN)
-									.hincrby('item:'+userid, medalid, MEDAL_COUNT)
-									.exec(check2(function(res){	// add medal
-										var newodd = res[1];
-										var newmedal = res[2];
-										mod.role = {PhotonSeed:newphoton, OddCoin:newodd};
-										var itemdata = mod.item || {};
-										itemdata[medalid] = newmedal;
-										mod.item = itemdata;
-
-										var clientdata = {};
-										clientdata[medalid] = MEDAL_COUNT;
-										sendobjres(mod, {item:clientdata, girl:girlid, role:{OddCoin:ODD_COIN}});
-									}));
-								} else {
-									newGirl.newGirl(table, girlid);
-									db.multi()
-									.hset('role:'+userid, 'PhotonSeed', newphoton)
-									.hincrby('role:'+userid, 'OddCoin', ODD_COIN)
-									.sadd('girls:'+userid, girlid)
-									.hmset('girl:'+userid+':'+girlid, newGirl)
-									.smembers('girls:'+userid)
-									.exec(check2(function(res){
-										var newodd = res[1];
-										var girls = res[4];
-										mod.role = {PhotonSeed:newphoton, OddCoin:newodd};
-										mod['girl.'+girlid] = newGirl;
-										mod.girls = girls;
-										sendobjres(mod, {girl:girlid, role:{OddCoin:ODD_COIN}});
-									}));
-								}
-							}));
-						}
-
 						var idlist = [];
+						var trans = new Transaction(db, uid);
 						if (itemcounts) {
 							for (var itemid in itemcounts) {
 								idlist.push(itemid);
 							}
-							mod.item = itemcounts;
-							db.hmget('item:'+userid, idlist, check(function(countlist){
+							db.hmget('item:'+uid, idlist, check(function(countlist){
 
 								//enough items?
 								var remaincount = {};
@@ -920,9 +856,7 @@ wss.on('connection', function(ws) {
 									remaincount[id] = remain;
 								}
 
-								console.log(remaincount);
-								db.hmset('item:'+userid, itemcounts, check(function(){
-									mod.item = remaincount;
+								trans.hmset('item', itemcounts, check(function(){
 									try {
 										dobuy();
 									} catch (e) {
@@ -938,6 +872,40 @@ wss.on('connection', function(ws) {
 							}
 						}
 
+						function dobuy() {
+							var newGirl = new Girl();
+							var girlid = newGirl.buyGirl(table, itemcounts);
+
+							// already exist?
+							db.sismember('girls:'+uid, girlid, check(function(exist){
+								var ODD_COIN = 1000;
+								if (exist) {
+									var rare = Math.floor(table.girl[girlid].Rare);
+									var medalid = 12000 + rare;
+									var MEDAL_COUNT = 10;
+									trans.multi()
+									.hincrby('role', 'PhotonSeed', -GIRL_PRICE)
+									.hincrby('role', 'OddCoin', ODD_COIN)
+									.hincrby('item', medalid, MEDAL_COUNT)
+									.exec(checklist(3,function(res){	// add medal
+										sendobj(trans.obj);
+									}));
+								} else {
+									newGirl.newGirl(table, girlid);
+									trans.multi()
+									.hincrby('role', 'PhotonSeed', -GIRL_PRICE)
+									.hincrby('role', 'OddCoin', ODD_COIN)
+									.sadd('girls', girlid)
+									.hmset('girl.'+girlid, newGirl)
+									.smembers('girls')
+									.exec(checklist(5,function(res){
+										sendobj(trans.obj);
+									}));
+								}
+							}));
+						}
+
+
 					}
 				}));
 				// random
@@ -950,22 +918,21 @@ wss.on('connection', function(ws) {
 			//@desc 查看数据：role girl room items girls friends pendingfriends（只有girl需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
+				var trans = new Transaction(db, id);
 				switch (viewname) {
 					case 'role':
-						db.hgetall('role:'+id, check2(function(role){
-							sendobj({role:role});
+						trans.hgetall('role', check2(function(role){
+							sendobj(trans.obj);
 						}));
 						break;
 					case 'girl':
-						db.hgetall('girl:'+id+':'+msg.data.id, check2(function(girl){
-							var girldata = {};
-							girldata['girl.'+girl.ID] = girl;
-							sendobj(girldata);
+						trans.hgetall('girl.'+msg.data.id, check2(function(girl){
+							sendobj(trans.obj);
 						}));
 						break;
 					case 'girls':
-						db.smembers('girls:'+id, check2(function(girls){
-							sendobj({girls:girls});
+						trans.smembers('girls', check2(function(girls){
+							sendobj(trans.obj);
 						}));
 						break;
 					case 'room':
@@ -980,12 +947,8 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 					case 'item':
-						db.hgetall('item:'+id, check(function(item){
-							if (!item) {
-								sendobj({item:{}});
-							} else {
-								sendobj({item:item});
-							}
+						trans.hgetall('item', check(function(item){
+							sendobj(trans.obj);
 						}));
 						break;
 					case 'friends':
@@ -1014,13 +977,13 @@ wss.on('connection', function(ws) {
 					db.multi()
 					.incr('next_account_id')
 					.set('user:'+user, pass)
-					.exec(check(function(res){
-						var userid = res[0];
-						db.set('account:'+user+':id', userid, check2(function(){
+					.exec(checklist(2,function(res){
+						var uid = res[0];
+						db.set('account:'+user+':id', uid, check2(function(){
 							// create role
 							var newRole = new Role();
-							newRole.newRole(userid);
-							db.hmset('role:'+userid, newRole, check(function(){
+							newRole.newRole(uid);
+							db.hmset('role:'+uid, newRole, check(function(){
 								sendnil();
 							}));
 						}));
@@ -1073,7 +1036,7 @@ wss.on('connection', function(ws) {
 									db.multi()
 									.del('sessionuser:'+oldsession, session)
 									.set('sessionuser:'+session, user)
-									.exec(check(function(res){
+									.exec(checklist(2,function(res){
 										user2ws[user] = ws;
 										ws2user[ws] = user;
 										sendobj({session:session});
