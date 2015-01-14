@@ -1046,6 +1046,7 @@ wss.on('connection', function(ws) {
 					} else {
 						db.lrange('team.'+team_t+':'+uid, 0, -1, check(function(list_t){
 							if (pos_t >= list_t.length) {	// s->t0
+								// IMPORTANT: must use girl_s.toString(): list_t is a array of string, and girl_s is int
 								var s_pos_t = list_t.indexOf(girl_s.toString());	// src pos in target list
 								if (s_pos_t != -1) {	// s->s0	=> move to the end of the list
 									if (s_pos_t == list_t.length-1) {	// already the last => do nothing
