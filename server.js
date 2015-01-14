@@ -730,7 +730,11 @@ wss.on('connection', function(ws) {
 					return;
 				}
 				var itemkey = 'item:'+uid;
-				db.hget(itemkey, itemid, check2err('no_item_err', function(count){
+				db.hget(itemkey, itemid, check(function(count){
+					if (!count || count <= 0) {
+						senderr('no_item_err');
+						return;
+					}
 					switch (item.Type) {
 						case 1:	//medal
 							if (item.Effect == 1 && girlid) {
@@ -746,9 +750,14 @@ wss.on('connection', function(ws) {
 										try {
 											var modgirl = girl.addRankExp(item.EffectValue);
 											var trans = new Transaction(db, uid);
-											trans.multi()
+											var multi = trans.multi();
+											if (count > 1) {
+												multi.hincrby('item', itemid, -1);
+											} else {
+												multi.hdel('item', itemid);
+											}
+											multi
 											.hmset('girl.'+girlid, modgirl)
-											.hincrby('item', itemid, -1)
 											.exec(checklist(2,function(res){
 												sendobj(trans.obj);
 											}));
@@ -762,13 +771,80 @@ wss.on('connection', function(ws) {
 							}
 							break;
 						case 2:	//multiply
-							//TODO
-							senderr('not_implemented_err');
+							var trans = new Transaction(db, uid);
+							var iteminfo = {ID: itemid, Begin:Date.now()};
+							var timeout = table.item[itemid].EffectValue;
+							var multi = trans.multi();
+							if (count > 1) {
+								multi.hincrby('item', itemid, -1);
+							} else {
+								multi.hdel('item', itemid);
+							}
+							multi
+							.hmset('activeitem', iteminfo)
+							.expire('activeitem', timeout)
+							.exec(checklist(3,function(res){
+								// set timeout for client use
+								trans.client().hmset('activeitem', {Timeout: timeout * 1000});
+								sendobj(trans.obj);
+							}));
 							break;
 						case 3:	//wuxing
 							senderr('cannot_use_item_err');
 							break;
 					}
+				}));
+			});
+			break;
+		case 'getactiveitem':
+			//@cmd getactiveitem
+			//@desc 获取当前正在使用的道具{ID:id Timeout:ms}
+			getuser(function(user, uid) {
+				db.hgetall('activeitem:'+uid, check(function(data){
+					var trans = new Transaction(db, uid);
+					if (data) {
+						var elapsed = Date.now() - data.Begin;
+						var life = table.item[data.ID].EffectValue * 1000;
+						data.Timeout = life - elapsed;
+						trans.client().hmset('activeitem', data);
+						sendobj(trans.obj);
+					} else {
+						sendobj({activeitem:null});
+					}	
+				}));
+			});
+			break;
+		case 'sellitem':
+			//@cmd sellitem
+			//@data itemid
+			//@data count
+			//@desc 卖道具
+			getuser(function(user, uid){
+				try {
+					var itemid = msg.data.itemid;
+					var count = msg.data.count;
+					var credit = count * table.item[itemid].Credit;
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+				db.hget('item:'+uid, itemid, check2(function(nowcount){
+					var trans = new Transaction(db, uid);
+					if (count < nowcount) {
+						var multi = trans.multi();
+						multi.hincrby('item', itemid, -count)
+					} else if (count == nowcount) {
+						var multi = trans.multi();
+						multi.hdel('item', itemid)
+					} else {
+						senderr('not_enough_item_err');
+						return;
+					}
+					multi
+					.hincrby('role', 'Credit', credit)
+					.exec(checklist(2,function(data){
+						sendobj(trans.obj);
+					}));
 				}));
 			});
 			break;

@@ -19,6 +19,11 @@ function merge(obj, key, value) {
 	}
 }
 
+Transaction.prototype.client = function () {
+	this.cli = true;
+	return this;
+}
+
 Transaction.prototype.multi = function () {
 	this.mul = this.db.multi();
 	this.keys = [];
@@ -33,7 +38,11 @@ Transaction.prototype.exec = function (cb) {
 				for (var i=0; i<self.keys.length; i++) {
 					var key = self.keys[i];
 					if (key) {
-						merge(self.obj, key, vals[i]);
+						if (key.indexOf('del ') != -1 && vals[i]>0) {
+							merge(self.obj, key.slice(4), null);
+						} else {
+							merge(self.obj, key, vals[i]);
+						}
 					}
 				}
 			}
@@ -50,6 +59,14 @@ Transaction.prototype.addkey = function (key, hkey) {
 		this.keys.push(key+'.'+hkey);
 	} else {
 		this.keys.push(key);
+	}
+}
+
+Transaction.prototype.delkey = function (key, hkey) {
+	if (hkey) {
+		this.keys.push('del ' + key+'.'+hkey);
+	} else {
+		this.keys.push('del ' + key);
 	}
 }
 
@@ -83,12 +100,17 @@ Transaction.prototype.hmset = function (key, mobj, cb) {
 		return this;
 	} else {
 		var self = this;
-		this.db.hmset(fullkey, mobj, function(err,newval){
+		if (this.cli) {
 			merge(self.obj, key, mobj);	
-			if (typeof cb == 'function') {
-				cb(err,newval);
-			}
-		});
+			this.cli = null;
+		} else {
+			this.db.hmset(fullkey, mobj, function(err,newval){
+				merge(self.obj, key, mobj);	
+				if (typeof cb == 'function') {
+					cb(err,newval);
+				}
+			});
+		}
 	}
 }
 
@@ -105,32 +127,79 @@ Transaction.prototype.sadd = function (key, add, cb) {
 	}
 }
 
-Transaction.prototype.smembers = function (key, cb) {
+Transaction.prototype.expire = function (key, sec, cb) {
 	var fullkey = key+':'+this.uid;
 	if (this.mul) {
-		this.mul.smembers(fullkey);
-		this.addkey(key);
+		this.mul.expire(fullkey, sec);
+		this.skipkey();
+		return this;
+	} else {
+		this.db.expire(fullkey, sec, function(err,count){
+			cb(err,count);
+		});
+	}
+}
+
+Transaction.prototype.hdel = function (key, hkey, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.hdel(fullkey, hkey);
+		this.delkey(key, hkey);
 		return this;
 	} else {
 		var self = this;
-		this.db.smembers(fullkey, function(err,arr){
-			merge(self.obj, key, arr);
+		this.db.hdel(fullkey, hkey, function(err,count){
+			merge(self.obj, key+'.'+hkey, null);
 			if (typeof cb == 'function') {
-				cb(err,arr);
+				cb(err,count);
 			}
 		});
 	}
 }
 
+Transaction.prototype.smembers = function (key, cb) {
+	return this.wrap1('smembers', key, true, cb);
+}
+
 Transaction.prototype.hgetall = function (key, cb) {
-	var fullkey = key+':'+this.uid;
+	return this.wrap1('hgetall', key, true, cb);
+}
+
+// funcname, arg1, arg2, ... ,argN, should-add-key, cb 
+var slice = [].slice;	// cached slice is faster
+Transaction.prototype.wrap = function () {
+	var funcname = arguments[0];
+	var args = slice.call(arguments, 1,-1);
+	var addkey = arguments[arguments.length-2];
+	var cb = arguments[arguments.length-1];
 	if (this.mul) {
-		this.mul.hgetall(fullkey);
-		this.addkey(key);
+		this.mul[funcname](args);
+		if (addkey) {
+			this.addkey(args[0]);
+		} else {
+			this.addkey(null);
+		}
 		return this;
 	} else {
 		var self = this;
-		this.db.hgetall(fullkey, function(err,data){
+		this.apply(this.db[funcname], args.concat(function(err,data){
+		}));
+	}
+}
+
+Transaction.prototype.wrap1 = function (funcname, key, addkey, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul[funcname](fullkey);
+		if (addkey) {
+			this.addkey(key);
+		} else {
+			this.addkey(null);
+		}
+		return this;
+	} else {
+		var self = this;
+		self.db[funcname](fullkey, function(err,data){
 			merge(self.obj, key, data);
 			if (typeof cb == 'function') {
 				cb(err,data);
