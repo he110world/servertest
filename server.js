@@ -987,11 +987,145 @@ wss.on('connection', function(ws) {
 				// random
 			});
 			break;
+		case 'setteam':
+			//@cmd setteam
+			//@data girlid
+			//@data teamid
+			//@data pos
+			//@desc 设置战姬所属编队(teamid:0-5)和位置(pos:0-3)
+			getuser(function(user,uid){
+				/*
+				 * find target team & pos
+				 * swap
+				 */
+				try {
+					// _s : source, _t : target
+					var girl_s = msg.data.girlid;
+					var team_t = Math.floor(msg.data.teamid);
+					var pos_t = Math.floor(msg.data.pos);
+					if (team_t<0 || team_t>5) {
+						throw new Error('invalid_team');
+					}
+					if (pos_t<0 || pos_t>3) {
+						throw new Error('invalid_pos');
+					}
+				} catch (e) {
+					senderr('data_err');
+					console.log(e);
+					return;
+				}
+				db.hmget('girl.'+girl_s+':'+uid, ['ID','Team'], checklist(2,function(girl){
+					var ID = girl[0];
+					var team_s = girl[1];
+					if (ID != girl_s) {
+						senderr('data_err');
+						return;
+					}
+					var trans = new Transaction(db, uid);
+
+					// s->0
+					if (team_t == 0) {
+						if (team_s > 0) {	// s->0
+							db.llen('team.'+team_s, check(function(len){
+								if (len <= 1) {
+									senderr('empty_team_err');
+								} else {
+									trans.multi()
+									.lrem('team.'+team_s, 0, girl_s)
+									.lrange('team.'+team_s,0,-1)		// update old list
+									.hset('girl.'+girl_s, 'Team', 0)	// set Team to 0
+									.exec(check(function(){
+										sendobj(trans.obj);
+										console.log(0);
+									}));
+								}
+							}));
+						} else {	// else 0->0
+							sendnil();
+						}
+					} else {
+						db.lrange('team.'+team_t+':'+uid, 0, -1, check(function(list_t){
+							if (pos_t >= list_t.length) {	// s->t0
+								var s_pos_t = list_t.indexOf(girl_s.toString());	// src pos in target list
+								if (s_pos_t != -1) {	// s->s0	=> move to the end of the list
+									if (s_pos_t == list_t.length-1) {	// already the last => do nothing
+										sendnil();
+										console.log(5);
+									} else {
+										trans.multi()
+										.lrem('team.'+team_t, 0, girl_s)
+										.rpush('team.'+team_t, girl_s)
+										.lrange('team.'+team_t, 0, -1)
+										.exec(check(function(){
+											sendobj(trans.obj);
+											console.log(4);
+										}));
+									}
+								} else {
+									if (team_s > 0) {	// remove from source list
+										db.llen('team.'+team_s+':'+uid, check(function(len){
+											if (len <= 1) {
+												senderr('empty_team_err');
+											} else {
+												trans.multi()
+												.lrem('team.'+team_s, 0, girl_s)	// remove from src list
+												.lrange('team.'+team_s, 0, -1)
+												.rpush('team.'+team_t, girl_s)	// s->t0
+												.lrange('team.'+team_t,0,-1)
+												.hset('girl.'+girl_s, 'Team', team_t)
+												.exec(check(function(){
+													sendobj(trans.obj);
+													console.log(1);
+												}));
+											}
+										}));
+									} else {
+										trans.multi()
+										.rpush('team.'+team_t, girl_s)	// s->t0
+										.lrange('team.'+team_t,0,-1)
+										.hset('girl.'+girl_s, 'Team', team_t)
+										.exec(check(function(){
+											sendobj(trans.obj);
+											console.log(1);
+										}));
+									}
+								}
+							} else {	// swap
+								var girl_t = list_t[pos_t];
+								if (team_s > 0) {	// s->t
+									db.lrange('team.'+team_s+':'+uid, 0, -1, check(function(list_s){
+										var pos_s = list_s.indexOf(girl_s);
+										trans.multi()
+										.lset('team.'+team_t, pos_t, girl_s)	// sg->t
+										.lset('team.'+team_s, pos_s, girl_t)	// tg->s
+										.hset('girl.'+girl_t, 'Team', team_s)	// st->tg
+										.hset('girl.'+girl_s, 'Team', team_t)	// tt->sg
+										.exec(check(function(){
+											sendobj(trans.obj);
+											console.log(2);
+										}));
+									}));
+								} else {	// 0->t
+									trans.multi()
+									.lset('team.'+team_t, pos_t, girl_s)	// sg->t
+									.hset('girl.'+girl_t, 'Team', 0)		// 0->tg
+									.hset('girl.'+girl_s, 'Team', team_t)	// tt->sg
+									.exec(check(function(){
+										sendobj(trans.obj);
+										console.log(3);
+									}));
+								}
+							}
+						}));
+					}
+				}));
+			});
+			break;
 		case 'view':
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends（只有girl需要用到id）
+			//@desc 查看数据：role girl room items girls friends pendingfriends team（girl/team需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
@@ -1033,6 +1167,11 @@ wss.on('connection', function(ws) {
 							var userdata = {};
 							userdata[viewname] = friendset; //friends;
 							sendobj(userdata);
+						}));
+						break;
+					case 'team':
+						trans.lrange('team.'+msg.data.id,0,-1,check(function(){
+							sendobj(trans.obj);
 						}));
 						break;
 				}

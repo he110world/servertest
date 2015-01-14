@@ -19,6 +19,21 @@ function merge(obj, key, value) {
 	}
 }
 
+function remove(obj, key) {
+	var keys = key.split('.');
+	var last = keys.length-1;
+	var o = obj;
+	for (var i=0; i<last; i++) {
+		var k = keys[i];
+		o = o[k];
+		if (o===undefined) {
+			return;
+		}
+	}
+	delete o[keys[last]];
+	return obj;
+}
+
 Transaction.prototype.client = function () {
 	this.cli = true;
 	return this;
@@ -72,6 +87,24 @@ Transaction.prototype.delkey = function (key, hkey) {
 
 Transaction.prototype.skipkey = function () {
 	this.keys.push(null);
+}
+
+Transaction.prototype.hset = function (key, hkey, val, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.hset(fullkey, hkey, val);
+		this.skipkey();
+		merge(this.obj, key+'.'+hkey, val);
+		return this;
+	} else {
+		var self = this;
+		this.db.hset(fullkey, hkey, val, function(err,addcount){
+			merge(self.obj, key+'.'+hkey, val);
+			if (typeof cb == 'function') {
+				cb(err,val);
+			}
+		});
+	}
 }
 
 Transaction.prototype.hincrby = function (key, hkey, incr, cb) {
@@ -156,6 +189,79 @@ Transaction.prototype.hdel = function (key, hkey, cb) {
 		});
 	}
 }
+
+Transaction.prototype.remove = function (key) {
+	if (this.cli) {
+		remove(this.obj, key);
+		this.cli = null;
+	}
+}
+
+Transaction.prototype.lrange = function (key, begin, end, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.lrange(fullkey, begin, end);
+		this.addkey(key);
+		return this;
+	} else {
+		var self = this;
+		this.db.lrange(fullkey, begin, end, function(err,arr){
+			merge(self.obj, key, arr);
+			if (typeof cb == 'function') {
+				cb(err,arr);
+			}
+		});
+	}
+}
+
+Transaction.prototype.lrem = function (key, count, val, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.lrem(fullkey, count, val);
+		this.skipkey();
+		return this;
+	} else {
+		var self = this;
+		this.db.lrem(fullkey, count, val, function(err,count){
+			if (typeof cb == 'function') {
+				cb(err,count);
+			}
+		});
+	}
+}
+
+Transaction.prototype.rpush = function (key, val, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.rpush(fullkey, val);
+		this.skipkey();
+		return this;
+	} else {
+		var self = this;
+		this.db.rpush(fullkey, val, function(err,count){
+			if (typeof cb == 'function') {
+				cb(err,count);
+			}
+		});
+	}
+}
+
+Transaction.prototype.lset = function (key, index, val, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.lset(fullkey, index, val);
+		this.skipkey();
+		return this;
+	} else {
+		var self = this;
+		this.db.lset(fullkey, index, val, function(err,count){
+			if (typeof cb == 'function') {
+				cb(err,count);
+			}
+		});
+	}
+}
+
 
 Transaction.prototype.smembers = function (key, cb) {
 	return this.wrap1('smembers', key, true, cb);
