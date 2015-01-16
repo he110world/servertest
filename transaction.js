@@ -55,6 +55,8 @@ Transaction.prototype.exec = function (cb) {
 					if (key) {
 						if (key.indexOf('del ') != -1 && vals[i]>0) {
 							merge(self.obj, key.slice(4), null);
+						} else if (key.indexOf('json ') != -1) {
+							merge(self.obj, key.slice(4), JSON.parse(vals[i]));
 						} else {
 							merge(self.obj, key, vals[i]);
 						}
@@ -85,8 +87,53 @@ Transaction.prototype.delkey = function (key, hkey) {
 	}
 }
 
+Transaction.prototype.addjsonkey = function (key, hkey) {
+	if (hkey) {
+		this.keys.push('json ' + key+'.'+hkey);
+	} else {
+		this.keys.push('json ' + key);
+	}
+}
+
 Transaction.prototype.skipkey = function () {
 	this.keys.push(null);
+}
+
+Transaction.prototype.hgetjson = function (key, hkey, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.hget(fullkey, hkey);
+		this.addjsonkey(key, hkey);
+		return this;
+	} else {
+		var self = this;
+		this.db.hget(fullkey, hkey, function(err,jsonstr){
+			var obj = JSON.parse(jsonstr);
+			merge(self.obj, key+'.'+hkey, obj);
+			if (typeof cb == 'function') {
+				cb(err,obj);
+			}
+		});
+	}
+}
+
+// convert json object to string, and store string in db
+Transaction.prototype.hsetjson = function (key, hkey, jsonobj, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.hset(fullkey, hkey, JSON.stringify(jsonobj));
+		this.skipkey();
+		merge(this.obj, key+'.'+hkey, jsonobj);
+		return this;
+	} else {
+		var self = this;
+		this.db.hset(fullkey, hkey, JSON.stringify(jsonobj), function(err,addcount){
+			merge(self.obj, key+'.'+hkey, jsonobj);
+			if (typeof cb == 'function') {
+				cb(err,addcount);
+			}
+		});
+	}
 }
 
 Transaction.prototype.hset = function (key, hkey, val, cb) {
@@ -101,7 +148,7 @@ Transaction.prototype.hset = function (key, hkey, val, cb) {
 		this.db.hset(fullkey, hkey, val, function(err,addcount){
 			merge(self.obj, key+'.'+hkey, val);
 			if (typeof cb == 'function') {
-				cb(err,val);
+				cb(err,addcount);
 			}
 		});
 	}
