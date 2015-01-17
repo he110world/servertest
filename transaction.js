@@ -277,19 +277,22 @@ Transaction.prototype.hdel = function (key, hkey, cb) {
 	} else {
 		var self = this;
 		if (typeof hkey == 'object') {
-			this.db.hdel.apply(this, [fullkey].concat(hkey), function(err,count){
+			this.db.hdel.apply(this.db, [fullkey].concat(hkey), function(err,count){
 				for (var i in hkey) {
 					self.obj[key] = self.obj[key] || {};
 					self.obj[key][hkey[i]] = null;
+				}
+				if (typeof cb == 'function') {
+					cb(err,count);
 				}
 			});
 		} else {
 			this.db.hdel(fullkey, hkey, function(err,count){
 				merge(self.obj, key+'.'+hkey, null);
+				if (typeof cb == 'function') {
+					cb(err,count);
+				}
 			});
-		}
-		if (typeof cb == 'function') {
-			cb(err,count);
 		}
 	}
 }

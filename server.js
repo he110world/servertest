@@ -277,7 +277,6 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
-					throw new Error(err);
 				} else {
 					if (typeof cb == 'function') {
 						cb(data);
@@ -290,7 +289,6 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err || !data) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
-					throw new Error(err);
 				} else {
 					if (typeof cb == 'function') {
 						cb(data);
@@ -303,7 +301,6 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err || !data || data.length!=len) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
-					throw new Error(err);
 				} else {
 					if (typeof cb == 'function') {
 						cb(data);
@@ -316,7 +313,6 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
-					throw new Error(err);
 				} else if (!data) {
 					responseErr(ws, msg.cmd, errmsg, msg.id);
 				} else {
@@ -789,7 +785,7 @@ wss.on('connection', function(ws) {
 					senderr('data_err');
 					return;
 				}
-				db.hget('gift:'+uid, giftidx, check2(function(jsonstr){
+				db.hget('gift:'+uid, giftidx, check2err('gift_not_exist_err',function(jsonstr){
 					var trans = new Transaction(db, uid);
 					try {
 						var json = JSON.parse(jsonstr);
@@ -813,7 +809,7 @@ wss.on('connection', function(ws) {
 										if (count >= 999) {
 											senderr('equip_limit_err');
 										} else {
-											db.incr('next_equip_id:'+uid, check2(function(index){
+											db.incr('next_equip_id:'+uid, check(function(index){
 												var equip = new Equip(table, id);
 												trans.hsetjson('equip', index, equip, check(function(){
 													sendobj(trans.obj);
