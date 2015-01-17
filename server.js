@@ -862,9 +862,11 @@ wss.on('connection', function(ws) {
 								girlmap[id] = girlmap[id] || 0;
 								++girlmap[id];
 
-								// gift items
+								// gift items => used for redis query
 								itemmap[12003] = 1;	//TODO
 								itemmap[12004] = 1;
+
+								delgifts.push(index);	// girl gift can always be used
 							} else {	// store parsed gifts for later use
 								if (res.type == 'equip') {
 									++addequipcount;
@@ -901,7 +903,7 @@ wss.on('connection', function(ws) {
 										for (var i=0; i<count; i++) {
 											var gift = new Gift(14001);
 											++next_gift_id;
-											giftres[net_gift_id] = gift.usesync(table);
+											giftres[next_gift_id] = gift.usesync(table);
 											addedgifts[next_gift_id] = gift;
 										}
 									}
@@ -952,16 +954,18 @@ wss.on('connection', function(ws) {
 							for (var index in giftres) {
 								var res = giftres[index];
 								var id = res.id;
-								var del = false;
+								var del = true;
 								if (res.type == 'item') {	// items
-									if (itemcounts[id] < table.item[id].Limit) {	// used gift => incr item:<uid> index
-										++itemcounts[id];			// hmset item:<uid> itemcounts
-										del = true;
+									if (itemcounts[id] + res.num <= table.item[id].Limit) {	// used gift => incr item:<uid> index
+										itemcounts[id] += res.num;			// hmset item:<uid> itemcounts
+									} else {
+										del = false;
 									}
 								} else if (res.type == 'equip') {	// equips
 									if (equipcount < 999) {
 										++equipcount;
-										del = true;
+									} else {
+										del = false;
 									}
 								}
 								if (del) {
@@ -1008,7 +1012,9 @@ wss.on('connection', function(ws) {
 							
 							// added gifts
 							if (!empty(addedgifts)) {
-								multi.hmsetjson('gift', addedgifts);
+								multi
+								.hmsetjson('gift', addedgifts)
+								.set('next_gift_id', next_gift_id);
 							}
 
 							// done
