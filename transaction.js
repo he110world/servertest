@@ -79,6 +79,22 @@ Transaction.prototype.addkey = function (key, hkey) {
 	}
 }
 
+/*
+Transaction.prototype.delkeyarr = function (key, hkeyarr) {
+	if (typeof hkeyarr == 'object') {
+		var dels = {};
+		for (var i in hkeyarr) {
+			dels[hkeyarr] = null;
+		}
+		var obj = {};
+		obj[key] = dels;
+		this.keys.push('delarr ' + JSON.stringify(obj));
+	} else {
+		this.keys.push('del ' + key);
+	}
+}
+*/
+
 Transaction.prototype.delkey = function (key, hkey) {
 	if (hkey) {
 		this.keys.push('del ' + key+'.'+hkey);
@@ -181,11 +197,34 @@ Transaction.prototype.hmset = function (key, mobj, cb) {
 	} else {
 		var self = this;
 		if (this.cli) {
-			merge(self.obj, key, mobj);	
 			this.cli = null;
 		} else {
 			this.db.hmset(fullkey, mobj, function(err,newval){
-				merge(self.obj, key, mobj);	
+				if (typeof cb == 'function') {
+					cb(err,newval);
+				}
+			});
+		}
+	}
+}
+
+Transaction.prototype.hmsetjson = function (key, mobj, cb) {
+	var fullkey = key+':'+this.uid;
+	merge(this.obj, key, mobj);
+	var mstrobj = {};
+	for (var i in mobj) {
+		mstrobj[i] = JSON.stringify(mobj[i]);
+	}
+	if (this.mul) {
+		this.mul.hmset(fullkey, mstrobj);
+		this.skipkey();
+		return this;
+	} else {
+		var self = this;
+		if (this.cli) {
+			this.cli = null;
+		} else {
+			this.db.hmset(fullkey, mstrobj, function(err,newval){
 				if (typeof cb == 'function') {
 					cb(err,newval);
 				}
@@ -223,17 +262,35 @@ Transaction.prototype.expire = function (key, sec, cb) {
 Transaction.prototype.hdel = function (key, hkey, cb) {
 	var fullkey = key+':'+this.uid;
 	if (this.mul) {
-		this.mul.hdel(fullkey, hkey);
-		this.delkey(key, hkey);
+		if (typeof hkey == 'object') {
+			this.mul.hdel.apply(this.mul, [fullkey].concat(hkey));
+			for (var i in hkey) {
+				this.obj[key] = this.obj[key] || {};
+				this.obj[key][hkey[i]] = null;
+			}
+			this.skipkey();
+		} else {
+			this.mul.hdel(fullkey, hkey);
+			this.delkey(key, hkey);
+		}
 		return this;
 	} else {
 		var self = this;
-		this.db.hdel(fullkey, hkey, function(err,count){
-			merge(self.obj, key+'.'+hkey, null);
-			if (typeof cb == 'function') {
-				cb(err,count);
-			}
-		});
+		if (typeof hkey == 'object') {
+			this.db.hdel.apply(this, [fullkey].concat(hkey), function(err,count){
+				for (var i in hkey) {
+					self.obj[key] = self.obj[key] || {};
+					self.obj[key][hkey[i]] = null;
+				}
+			});
+		} else {
+			this.db.hdel(fullkey, hkey, function(err,count){
+				merge(self.obj, key+'.'+hkey, null);
+			});
+		}
+		if (typeof cb == 'function') {
+			cb(err,count);
+		}
 	}
 }
 
@@ -309,6 +366,25 @@ Transaction.prototype.lset = function (key, index, val, cb) {
 	}
 }
 
+Transaction.prototype.set = function (key, val, cb) {
+	merge(this.obj, key, val);
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.set(fullkey, key, val);
+		this.skipkey();
+		return this;
+	} else {
+		if (this.cli) {
+			this.cli = null;
+		} else {
+			this.db.set(fullkey, key, val, function(err,count){
+				if (typeof cb == 'function') {
+					cb(err,count);
+				}
+			});
+		}
+	}
+}
 
 Transaction.prototype.smembers = function (key, cb) {
 	return this.wrap1('smembers', key, true, cb);
@@ -351,13 +427,17 @@ Transaction.prototype.wrap1 = function (funcname, key, addkey, cb) {
 		}
 		return this;
 	} else {
-		var self = this;
-		self.db[funcname](fullkey, function(err,data){
-			merge(self.obj, key, data);
-			if (typeof cb == 'function') {
-				cb(err,data);
-			}
-		});
+		if (this.cli) {
+			this.cli = null;
+		} else {
+			var self = this;
+			self.db[funcname](fullkey, function(err,data){
+				merge(self.obj, key, data);
+				if (typeof cb == 'function') {
+					cb(err,data);
+				}
+			});
+		}
 	}
 }
 

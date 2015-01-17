@@ -277,6 +277,7 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
+					throw new Error(err);
 				} else {
 					if (typeof cb == 'function') {
 						cb(data);
@@ -289,6 +290,7 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err || !data) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
+					throw new Error(err);
 				} else {
 					if (typeof cb == 'function') {
 						cb(data);
@@ -301,6 +303,7 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err || !data || data.length!=len) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
+					throw new Error(err);
 				} else {
 					if (typeof cb == 'function') {
 						cb(data);
@@ -313,6 +316,7 @@ wss.on('connection', function(ws) {
 			return function (err, data) {
 				if (err) {
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
+					throw new Error(err);
 				} else if (!data) {
 					responseErr(ws, msg.cmd, errmsg, msg.id);
 				} else {
@@ -832,6 +836,200 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'useallgifts':
+			//@cmd useallgifts
+			//@desc 领取全部礼包
+			getuser(function(user,uid){
+				db.get('next_gift_id:'+uid, check(function(next_gift_id){
+					next_gift_id = Math.floor(next_gift_id);
+					next_equip_id = 0;
+
+					db.hgetall('gift:'+uid, check(function(gifts){
+						var girlmap = {};
+						var allgirls = [];
+						var addedgirls = [];
+						var itemmap = {};
+						var addedgifts = {};
+						var delgifts = [];
+						var giftres = {};
+						var addequipcount = 0;
+						var oldequipcount = 0;
+						var addedequips = {};
+						var itemcounts = {};
+
+						// find girls
+						for (var index in gifts) {
+							json = JSON.parse(gifts[index]);
+							var gift = new Gift(json.ID);
+							var res = gift.usesync(table);
+							var id = res.id;
+							if (res.type == 'girl') {
+								girlmap[id] = girlmap[id] || 0;
+								++girlmap[id];
+
+								// gift items
+								itemmap[12003] = 1;	//TODO
+								itemmap[12004] = 1;
+							} else {	// store parsed gifts for later use
+								if (res.type == 'equip') {
+									++addequipcount;
+									++next_equip_id;
+									addedequips[next_equip_id] = new Equip(table, id);
+								} else if (res.type == 'item') {
+									itemmap[id] = itemmap[id] || 0;
+									++itemmap[id];
+								}
+								giftres[index] = res;
+							}
+						}
+
+						// process girl
+						if (empty(girlmap)) {
+							useallgifts();
+						} else {
+							db.smembers('girls:'+uid, check(function(girls){
+								for (var girlid in girlmap) {
+									var ismember = girls.indexOf(girlid) != -1;
+									if (!ismember) {	// add girl
+										addedgirls.push(girlid);
+
+										++next_gift_id;
+										var gift = new Gift(14000);
+										giftres[next_gift_id] = gift.usesync(table);
+										addedgifts[next_gift_id] = gift;
+									}
+									if (ismember || girlmap[girlid] > 1) {	// add gift
+										var count = girlmap[girlid] - 1;
+										if (ismember) {
+											++count;
+										}
+										for (var i=0; i<count; i++) {
+											var gift = new Gift(14001);
+											++next_gift_id;
+											giftres[net_gift_id] = gift.usesync(table);
+											addedgifts[next_gift_id] = gift;
+										}
+									}
+								}
+								for (var i in addedgirls) {
+									girls.push(addedgirls[i]);
+								}
+								allgirls = girls;
+								useallgifts();
+							}));
+						}
+						
+						function useallgifts () {
+							// check count limit
+							var itemarr = [];
+							for (var i in itemmap) {
+								itemarr.push(i);
+							}
+
+							if (itemarr.length>0) {
+								db.hmget('item:'+uid, itemarr, check(function(counts){
+									for (var j=0; j<itemarr.length; j++) {
+										itemcounts[itemarr[j]] = Math.floor(counts[j]);
+									}
+									checkequip();
+								}));
+							} else {
+								checkequip();
+							}
+						}
+
+						function checkequip () {
+							// get item counts
+							if (addequipcount > 0) {
+								db.hlen('equip:'+uid, check(function(count){
+									db.get('next_equip_id:'+uid, check(function(nextid){
+										next_equip_id = Math.floor(nextid);
+										equipcount = count;
+										douse();
+									}));
+								}));
+							} else {
+								douse();
+							}
+						}
+
+						function douse () {						
+							for (var index in giftres) {
+								var res = giftres[index];
+								var id = res.id;
+								var del = false;
+								if (res.type == 'item') {	// items
+									if (itemcounts[id] < table.item[id].Limit) {	// used gift => incr item:<uid> index
+										++itemcounts[id];			// hmset item:<uid> itemcounts
+										del = true;
+									}
+								} else if (res.type == 'equip') {	// equips
+									if (equipcount < 999) {
+										++equipcount;
+										del = true;
+									}
+								}
+								if (del) {
+									if (addedgifts.hasOwnProperty(index)) {	// added & used
+										delete addedgifts[index];
+									} else {
+										delgifts.push(index);
+									}
+								}
+							}
+
+							// save db
+							var trans = new Transaction(db, uid);
+							var multi = trans.multi();
+
+							// girls
+							if (addedgirls.length > 0) {
+								for (var i in addedgirls) {
+									var girl = new Girl;
+									var girlid = addedgirls[i];
+									girl.newGirl(table, girlid);
+									multi.hmset('girl.'+girlid, girl);
+								}
+								multi.sadd('girls', addedgirls);
+								trans.client().set('girls', allgirls);
+							}
+	
+							// items
+							if (!empty(itemcounts)) {
+								multi.hmset('item', itemcounts);
+							}
+
+							// equips
+							if (addequipcount > 0) {
+								for (var index in addedequips) {
+									multi.hsetjson('equip', index, addedequips[index]);
+								}
+							}
+
+							// deleted gifts
+							if (delgifts.length > 0) {
+								multi.hdel('gift', delgifts);
+							}
+							
+							// added gifts
+							if (!empty(addedgifts)) {
+								multi.hmsetjson('gift', addedgifts);
+							}
+
+							// done
+							multi.exec(function(){
+								sendobj(trans.obj);
+							});
+						}
+
+						// used gifts			=> remove db
+						// unused gifts			=>
+						// added & used gifts	=> add result to db
+						// added & unused gifts => add db
+
+					}));
+
+				}));
+			});
 			break;
 		case 'useitem':
 			//@cmd useitem
@@ -860,30 +1058,26 @@ wss.on('connection', function(ws) {
 							if (item.Effect == 1 && girlid) {
 								var query = ['Rank', 'RankExp'];
 								var girlkey = 'girl.'+girlid+':'+uid;
-								db.hmget(girlkey, query, check2(function(data){
-									if (data.length != query.length) {
-										senderr('db_err');
-									} else {
-										var girl = new Girl(table);
-										girl.Rank = data[0];
-										girl.RankExp = data[1];
-										try {
-											var modgirl = girl.addRankExp(item.EffectValue);
-											var trans = new Transaction(db, uid);
-											var multi = trans.multi();
-											if (count > 1) {
-												multi.hincrby('item', itemid, -1);
-											} else {
-												multi.hdel('item', itemid);
-											}
-											multi
-											.hmset('girl.'+girlid, modgirl)
-											.exec(checklist(2,function(res){
-												sendobj(trans.obj);
-											}));
-										} catch (e) {
-											senderr('data_err');
+								db.hmget(girlkey, query, checklist(2,function(data){
+									var girl = new Girl(table);
+									girl.Rank = data[0];
+									girl.RankExp = data[1];
+									try {
+										var modgirl = girl.addRankExp(item.EffectValue);
+										var trans = new Transaction(db, uid);
+										var multi = trans.multi();
+										if (count > 1) {
+											multi.hincrby('item', itemid, -1);
+										} else {
+											multi.hdel('item', itemid);
 										}
+										multi
+										.hmset('girl.'+girlid, modgirl)
+										.exec(checklist(2,function(res){
+											sendobj(trans.obj);
+										}));
+									} catch (e) {
+										senderr('data_err');
 									}
 								}));
 							} else {
