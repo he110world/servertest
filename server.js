@@ -617,39 +617,6 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'ADD_12000':
-			//@cmd ADD_Credit
-			//@data count
-			//@desc 加游戏币
-		case 'ADD_12001':
-			//@cmd ADD_PhotonSeed
-			//@data count
-			//@desc 加光粒子结晶
-		case 'ADD_12002':
-			//@cmd ADD_FriendCoin
-			//@data count
-			//@desc 加绊金币
-		case 'ADD_12003':
-			//@cmd ADD_OddCoin
-			//@data count
-			//@desc 加欠片
-			try {
-				var money = msg.cmd.split('_')[1];
-				getuser(function(user, uid){
-					try {
-						var count = msg.data.count;
-					} catch(e) {
-						count = 100;
-					}
-					var trans = new Transaction(db, uid);
-					trans.hincrby('item', money, count, check(function(newcount){
-						sendobj(trans.obj);
-					}));
-				});
-			} catch (e) {
-				senderr('data_err:count');
-			}
-			break;
 		case 'ADD_Item':
 			//@cmd ADD_Item
 			//@data id
@@ -660,9 +627,13 @@ wss.on('connection', function(ws) {
 					var itemid = msg.data.id;
 					var count = msg.data.count;
 					var trans = new Transaction(db, uid);
-					trans.hincrby('item', itemid, count, check(function(){
-						sendobj(trans.obj);
-					}));
+					if (itemid && count) {
+						trans.hincrby('item', itemid, count, check(function(){
+							sendobj(trans.obj);
+						}));
+					} else {
+						senderr('data_err:id,count');
+					}
 				} catch (e) {
 					senderr('data_err:id,count');
 				}
@@ -683,7 +654,7 @@ wss.on('connection', function(ws) {
 						var data = {};
 						data.pendingfriends = {};
 						data.pendingfriends[user] = 1;
-						notifymsg(target, {cmd:"view", data:data});
+						notifymsg(target, {cmd:'view', data:data});
 					}));
 				} catch (e) {
 					senderr('data_err:target');
@@ -712,7 +683,7 @@ wss.on('connection', function(ws) {
 							var targetdata = {};
 							targetdata.friends = {};
 							targetdata.friends[user] = null;
-							notifymsg(target, {cmd:"view", data:targetdata});
+							notifymsg(target, {cmd:'view', data:targetdata});
 						}));
 					}));
 				} catch (e) {
@@ -745,7 +716,7 @@ wss.on('connection', function(ws) {
 								var targetdata = {};
 								targetdata.friends = {};
 								targetdata.friends[user] = 1;
-								notifymsg(target, {cmd:"view", data:targetdata});
+								notifymsg(target, {cmd:'view', data:targetdata});
 							}));
 						}));
 					}));
@@ -1406,7 +1377,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends team equip（girl/team/equip需要用到id）
+			//@desc 查看数据：role girl room items girls friends pendingfriends team equip gift gifts（girl/team/equip/gift需要用到id）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
@@ -1457,6 +1428,16 @@ wss.on('connection', function(ws) {
 						break;
 					case 'equip':
 						trans.hgetjson('equip', msg.data.id, check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
+					case 'gift':
+						trans.hgetjson('gift', msg.data.id, check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
+					case 'gifts':
+						trans.hgetalljson('gift', check(function(){
 							sendobj(trans.obj);
 						}));
 						break;

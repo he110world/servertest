@@ -57,6 +57,13 @@ Transaction.prototype.exec = function (cb) {
 							merge(self.obj, key.slice(4), null);
 						} else if (key.indexOf('json ') != -1) {
 							merge(self.obj, key.slice(4), JSON.parse(vals[i]));
+						} else if (key.indexOf('jo ') != -1) {
+							var obj = {};
+							var json = vals[i];
+							for (var j in json) {
+								obj[j] = JSON.parse(json[j]);
+							}
+							merge(self.obj, key.slice(3), obj);
 						} else {
 							merge(self.obj, key, vals[i]);
 						}
@@ -111,6 +118,10 @@ Transaction.prototype.addjsonkey = function (key, hkey) {
 	}
 }
 
+Transaction.prototype.addjsonobj = function (key) {
+	this.keys.push('jo ' + key);
+}
+
 Transaction.prototype.skipkey = function () {
 	this.keys.push(null);
 }
@@ -126,6 +137,27 @@ Transaction.prototype.hgetjson = function (key, hkey, cb) {
 		this.db.hget(fullkey, hkey, function(err,jsonstr){
 			var obj = JSON.parse(jsonstr);
 			merge(self.obj, key+'.'+hkey, obj);
+			if (typeof cb == 'function') {
+				cb(err,obj);
+			}
+		});
+	}
+}
+
+Transaction.prototype.hgetalljson = function (key, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.hgetall(fullkey);
+		this.addjsonobj(key);
+		return this;
+	} else {
+		var self = this;
+		this.db.hgetall(fullkey, function(err,json){
+			var obj = {};
+			for (var i in json) {
+				obj[i] = JSON.parse(json[i]);
+			}
+			merge(self.obj, key, obj);
 			if (typeof cb == 'function') {
 				cb(err,obj);
 			}
