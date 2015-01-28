@@ -1249,7 +1249,7 @@ wss.on('connection', function(ws) {
 			//@data girlid
 			//@data teamid
 			//@data pos
-			//@desc 设置战姬所属编队(teamid:0-5)和位置(pos:0-3)
+			//@desc 设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
 			//TODO: cost cap
 			getuser(function(user,uid){
 				/*
@@ -1284,7 +1284,7 @@ wss.on('connection', function(ws) {
 					// s->0
 					if (team_t == 0) {
 						if (team_s > 0) {	// s->0
-							db.llen('team.'+team_s, check(function(len){
+							db.llen('team.'+team_s+':'+uid, check(function(len){
 								if (len <= 1) {
 									senderr('empty_team_err');
 								} else {
@@ -1348,13 +1348,24 @@ wss.on('connection', function(ws) {
 								var girl_t = list_t[pos_t];
 								if (team_s > 0) {	// s->t
 									db.lrange('team.'+team_s+':'+uid, 0, -1, check(function(list_s){
-										var pos_s = list_s.indexOf(girl_s);
+										//IMPORTANT
+										var pos_s = list_s.indexOf(girl_s.toString());
 										trans.multi()
 										.lset('team.'+team_t, pos_t, girl_s)	// sg->t
 										.lset('team.'+team_s, pos_s, girl_t)	// tg->s
 										.hset('girl.'+girl_t, 'Team', team_s)	// st->tg
 										.hset('girl.'+girl_s, 'Team', team_t)	// tt->sg
 										.exec(check(function(){
+											if (team_s == team_t) {	// same team swap
+												list_s[pos_t] = girl_s;
+												list_s[pos_s] = girl_t;
+												trans.client().set('team.'+team_s, list_s);
+											} else {
+												list_t[pos_t] = girl_s;
+												list_s[pos_s] = girl_t;
+												trans.client().set('team.'+team_t, list_t);
+												trans.client().set('team.'+team_s, list_s);
+											}
 											sendobj(trans.obj);
 										}));
 									}));
@@ -1364,6 +1375,8 @@ wss.on('connection', function(ws) {
 									.hset('girl.'+girl_t, 'Team', 0)		// 0->tg
 									.hset('girl.'+girl_s, 'Team', team_t)	// tt->sg
 									.exec(check(function(){
+										list_t[pos_t] = girl_s;
+										trans.client().set('team.'+team_t, list_t);
 										sendobj(trans.obj);
 									}));
 								}
