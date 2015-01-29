@@ -1,15 +1,34 @@
-var file = process.argv[2];
+var args = process.argv.slice(2);
+var file = args[0];
 if (!file) {
-	console.log('Usage: node exporttables.js table.xls*');
+	console.log('Usage: node exporttables.js table.xls* --skip name1 name2');
 	process.exit();
 }
+
+var skips = [];
+var state = '';
+for (var i=1; i<args.length; i++) {
+	if (args[i] == '--skip' || args[i] == '-s') {
+		state = 'skip';
+		continue;
+	}
+
+	if (state == 'skip') {
+		skips.push(args[i]);
+	}
+}
+
 var excel = require('node-xlsx');
 var obj = excel.parse(file);
 var table = {};
 for (var i in obj) {
 	var sheet = obj[i];
+	if (skips.indexOf(sheet.name) != -1) {
+		continue;
+	}
 
 	if (sheet.name == 'exp') {	// exp table is different
+//		continue;
 		// exp structure:
 		// exp : {
 		//		Lv : [...]
@@ -61,7 +80,9 @@ for (var i in obj) {
 			var onedata = {};
 			for (var k in colnames) {
 				var colname = colnames[k];
-				onedata[colname] = sheet.data[j][k];
+				if (colname) {
+					onedata[colname] = sheet.data[j][k];
+				}
 			}
 			data[ID] = onedata;
 		}
