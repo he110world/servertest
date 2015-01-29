@@ -360,6 +360,7 @@ wss.on('connection', function(ws) {
 						}
 						multi.hsetjson('gift', index, new Gift(SAME_GIRL_GIFT))	// already own this girl
 						.exec(check(function(res){	// add medal
+							trans.client().set('buygirl', [girlid]);
 							sendobj(trans.obj);
 						}));
 					}));

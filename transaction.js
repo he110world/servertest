@@ -49,6 +49,7 @@ Transaction.prototype.exec = function (cb) {
 	var self = this;
 	if (this.mul) {
 		this.mul.exec(function(err, vals){
+			this.mul = null;
 			if (!err && vals.length == self.keys.length) {
 				for (var i=0; i<self.keys.length; i++) {
 					var key = self.keys[i];
@@ -74,7 +75,6 @@ Transaction.prototype.exec = function (cb) {
 				cb(err,vals);
 			}
 		});
-		this.mul = null;
 	}
 }
 
@@ -402,15 +402,15 @@ Transaction.prototype.lset = function (key, index, val, cb) {
 }
 
 Transaction.prototype.server = function () {
-	this.server = true;
+	this.serv = true;
 	return this;
 }
 
 Transaction.prototype.set = function (key, val, cb) {
-	if (this.server) {
-		this.server = false;
+	if (this.serv) {
+		this.serv = false;
 	} else {
-		merge(this.obj, val);
+		merge(this.obj, key, val);
 	}
 	var fullkey = key+':'+this.uid;
 	if (this.mul) {
