@@ -19,7 +19,8 @@ Gift.prototype.use = function (table, cb) {
 			if (girl) {
 				cb('girl', id, num);
 			} else {
-				throw new Error('invalid_gift_err');
+				cb(null, id, num);
+//				throw new Error('invalid_gift_err');
 			}
 		}
 	}

@@ -401,18 +401,27 @@ Transaction.prototype.lset = function (key, index, val, cb) {
 	}
 }
 
+Transaction.prototype.server = function () {
+	this.server = true;
+	return this;
+}
+
 Transaction.prototype.set = function (key, val, cb) {
-	merge(this.obj, key, val);
+	if (this.server) {
+		this.server = false;
+	} else {
+		merge(this.obj, val);
+	}
 	var fullkey = key+':'+this.uid;
 	if (this.mul) {
-		this.mul.set(fullkey, key, val);
+		this.mul.set(fullkey, val);
 		this.skipkey();
 		return this;
 	} else {
 		if (this.cli) {
 			this.cli = null;
 		} else {
-			this.db.set(fullkey, key, val, function(err,count){
+			this.db.set(fullkey, val, function(err,count){
 				if (typeof cb == 'function') {
 					cb(err,count);
 				}

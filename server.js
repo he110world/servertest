@@ -793,7 +793,8 @@ wss.on('connection', function(ws) {
 								} else if (type == 'girl') {
 									addgirl(trans, uid, id);
 								} else {
-									senderr('invalid_gift_err');
+									// invalid gift
+									sendobj(trans.obj);
 								}
 							}));
 						});
@@ -810,7 +811,7 @@ wss.on('connection', function(ws) {
 			getuser(function(user,uid){
 				db.get('next_gift_id:'+uid, check(function(next_gift_id){
 					next_gift_id = Math.floor(next_gift_id);
-					next_equip_id = 0;
+					var next_equip_id = 0;
 
 					db.hgetall('gift:'+uid, check(function(gifts){
 						var girlmap = {};
@@ -824,6 +825,7 @@ wss.on('connection', function(ws) {
 						var oldequipcount = 0;
 						var addedequips = {};
 						var itemcounts = {};
+						var equipcount = 0;
 
 						// find girls
 						for (var index in gifts) {
@@ -843,8 +845,6 @@ wss.on('connection', function(ws) {
 							} else {	// store parsed gifts for later use
 								if (res.type == 'equip') {
 									++addequipcount;
-									++next_equip_id;
-									addedequips[next_equip_id] = new Equip(table, id);
 								} else if (res.type == 'item') {
 									itemmap[id] = itemmap[id] || 0;
 									++itemmap[id];
@@ -912,9 +912,10 @@ wss.on('connection', function(ws) {
 							// get item counts
 							if (addequipcount > 0) {
 								db.hlen('equip:'+uid, check(function(count){
+									equipcount = count;
+
 									db.get('next_equip_id:'+uid, check(function(nextid){
 										next_equip_id = Math.floor(nextid);
-										equipcount = count;
 										douse();
 									}));
 								}));
@@ -924,6 +925,7 @@ wss.on('connection', function(ws) {
 						}
 
 						function douse () {						
+							var oldequipcount = equipcount;
 							for (var index in giftres) {
 								var res = giftres[index];
 								var id = res.id;
@@ -937,6 +939,8 @@ wss.on('connection', function(ws) {
 								} else if (res.type == 'equip') {	// equips
 									if (equipcount < 999) {
 										++equipcount;
+										++next_equip_id;
+										addedequips[next_equip_id] = new Equip(table, res.id);
 									} else {
 										del = false;
 									}
@@ -972,10 +976,11 @@ wss.on('connection', function(ws) {
 							}
 
 							// equips
-							if (addequipcount > 0) {
+							if (equipcount > oldequipcount) {
 								for (var index in addedequips) {
 									multi.hsetjson('equip', index, addedequips[index]);
 								}
+								multi.server().set('next_equip_id', next_equip_id);
 							}
 
 							// deleted gifts
@@ -987,7 +992,7 @@ wss.on('connection', function(ws) {
 							if (!empty(addedgifts)) {
 								multi
 								.hmsetjson('gift', addedgifts)
-								.set('next_gift_id', next_gift_id);
+								.server().set('next_gift_id', next_gift_id);
 							}
 
 							// done
@@ -1145,21 +1150,13 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				// cost
 				try {
-					var shopid = msg.data.shopid;
+					var money = msg.data.shopid;
 					var itemid = msg.data.itemid;
-					var money = null;
-					if (shopid == 1) {	//credit
-						money = 12000;
-					} else if (shopid == 2) {	//photonseed
-						money = 12001;
-					} else if (shopid == 3) {	//friendcoin
-						money = 12002;
-					} else if (shopid == 4) {	//oddcoin
-						money = 12003;
-					} else {
+					if (money < 12000 || money > 12003) {
 						senderr('wrong_shop_err');
 						return;
 					}
+
 					db.hget('item:'+uid, money, check(function(count){
 						var cost = table.item[itemid][money];
 						if (cost > count) {
@@ -1392,7 +1389,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends team equip allgift（girl/team/equip需要用到id, allgift返回的是gift:{id:{ID Time}}）
+			//@desc 查看数据：role girl room items girls friends pendingfriends team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
