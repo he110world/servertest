@@ -343,6 +343,8 @@ wss.on('connection', function(ws) {
 			return Object.keys(obj).length === 0;
 		}
 
+		var GIRL_GIFT = 14017;
+		var SAME_GIRL_GIFT = 14018;
 		function addgirl(trans, uid, girlid, price) {
 			// already exist?
 			db.sismember('girls:'+uid, girlid, check(function(exist){
@@ -354,9 +356,9 @@ wss.on('connection', function(ws) {
 						if (price > 0) {	// buy
 							multi
 							.hincrby('item', 12001, -price)
-							.hsetjson('gift', index-1, new Gift(14000))	//TODO: real gift
+							.hsetjson('gift', index-1, new Gift(GIRL_GIFT))	//TODO: real gift
 						}
-						multi.hsetjson('gift', index, new Gift(14001))	// already own this girl
+						multi.hsetjson('gift', index, new Gift(SAME_GIRL_GIFT))	// already own this girl
 						.exec(check(function(res){	// add medal
 							sendobj(trans.obj);
 						}));
@@ -369,7 +371,7 @@ wss.on('connection', function(ws) {
 						if (price > 0) {	// buy
 							multi
 							.hincrby('item', 12001, -price)
-							.hsetjson('gift', index, new Gift(14000))	//TODO: real gift
+							.hsetjson('gift', index, new Gift(GIRL_GIFT))	//TODO: real gift
 						}
 						multi
 						.sadd('girls', girlid)
@@ -862,7 +864,7 @@ wss.on('connection', function(ws) {
 										addedgirls.push(girlid);
 
 										++next_gift_id;
-										var gift = new Gift(14000);
+										var gift = new Gift(GIRL_GIFT);
 										giftres[next_gift_id] = gift.usesync(table);
 										addedgifts[next_gift_id] = gift;
 									}
@@ -872,7 +874,7 @@ wss.on('connection', function(ws) {
 											++count;
 										}
 										for (var i=0; i<count; i++) {
-											var gift = new Gift(14001);
+											var gift = new Gift(SAME_GIRL_GIFT);
 											++next_gift_id;
 											giftres[next_gift_id] = gift.usesync(table);
 											addedgifts[next_gift_id] = gift;
@@ -1161,7 +1163,7 @@ wss.on('connection', function(ws) {
 					db.hget('item:'+uid, money, check(function(count){
 						var cost = table.item[itemid][money];
 						if (cost > count) {
-							senderr('not_enough_'+money+'_err');
+							senderr('not_enough_item_err');
 						} else {
 							var trans = new Transaction(db, uid);
 							trans.multi()
@@ -1186,7 +1188,7 @@ wss.on('connection', function(ws) {
 				var mod = {};
 				db.hget('item:'+uid, 12001, check(function(photon){
 					if (photon < GIRL_PRICE) {
-						senderr('not_enough_PhotonSeed_err');
+						senderr('not_enough_item_err');
 					} else {
 						// used items
 						try {
@@ -1390,7 +1392,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends team equip gift gifts（girl/team/equip/gift需要用到id）
+			//@desc 查看数据：role girl room items girls friends pendingfriends team equip allgift（girl/team/equip需要用到id, allgift返回的是gift:{id:{ID Time}}）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
@@ -1444,12 +1446,14 @@ wss.on('connection', function(ws) {
 							sendobj(trans.obj);
 						}));
 						break;
+						/*
 					case 'gift':
 						trans.hgetjson('gift', msg.data.id, check(function(){
 							sendobj(trans.obj);
 						}));
 						break;
-					case 'gifts':
+						*/
+					case 'allgift':
 						trans.hgetalljson('gift', check(function(){
 							sendobj(trans.obj);
 						}));
