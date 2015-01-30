@@ -385,12 +385,207 @@ wss.on('connection', function(ws) {
 				}
 			}));
 		}
+
+		function resetboard (board) {
+			db.exists(board, check(function(exist){
+				if (exist) {
+					db.multi()
+					.del(board+'_gift')				// remove gift info
+					.rename(board, board+'_last')	// move to last week
+					.exec(check(function(){
+						sendnil();
+					}));
+				} else {
+					sendnil();
+				}
+			}));
+		}
+
+		function finishgetboard (board, ranges) {
+			var cnt = 0;
+			var finallist = [];
+			var datalist = [];
+			var obj = {};
+			obj[board] = finallist;
+			if (ranges.length == 0) {
+				sendobj(obj);
+				return;
+			}
+
+			for (var i=0; i<ranges.length; i+=2) {
+				db.zrevrange(board, ranges[i], ranges[i+1], 'withscores', check(function(uid_scores){
+					cnt += 2;
+					datalist.push(uid_scores);
+					if (cnt == ranges.length) {	// done!
+						for (var j=0; j<datalist.length; j++) {
+							var sublist = datalist[j];
+							var rankmin = ranges[j*2];
+							for (var k=0; k<sublist.length; k+=2) {	// [uid, score, uid, score ...]
+								var player =  {ID: sublist[k], Score: sublist[k+1], Rank: rankmin++};
+								finallist.push(player);
+							}
+						}
+						sendobj(obj);
+					}
+				}));
+			}
+		}
+
+		// board player info: {ID:<uid>, Nick:<nickname>, Rank:<rank>, Girl:<girl>, Score:<score>}
+		// return [board_player_info]
+		// temp struct: {<uid>:board_player_info}
+		function getboard (board, cap) {
+			getuser(function(user,uid){
+				db.zcard(board, check(function(count){	// board size
+					if (!count) {	// empty board
+						finishgetboard(board, []);
+						return;
+					}
+
+					db.zrevrank(board, uid, check(function(myrank){
+						// get query list
+						var ranges = [];
+						var boardmax = Math.min(cap, count)-1;
+						if (myrank === null) {
+							myrank = boardmax + 1;
+						}
+
+						// self
+						if (myrank <= boardmax) {	// have rank
+
+							// max(0, myrank-9) -> myrank
+							ranges.push([Math.max(0, myrank-9),1], [myrank,-1]);
+						}
+
+						// others
+						if (myrank > 9) {	// not in top10
+							// top
+							// 0 -> min(9, boardmax)
+							ranges.push([0,1], [Math.min(9,boardmax),-1]);
+
+
+							// bottom
+							// max(0, boardmax-9) -> boardmax
+							ranges.push([Math.max(0, boardmax-9),1], [boardmax,-1]);
+						}
+
+						ranges.sort(function(a,b){
+							return a[0]-b[0];
+						});
+
+						console.log(ranges);
+						var open = 0;
+						var merged = [];
+						for (var i=0; i<ranges.length; i++) {
+							var r = ranges[i];
+							if (r[1] > 0) {
+								if (open == 0) {
+									if (i > 0 && merged[merged.length-1] == r[0]) {	// e.g. [1,2,2,3] => [1,3]
+										merged.pop();
+									} else {
+										merged.push(r[0]);
+									}
+								}
+								++open;
+							} else {
+								--open;
+								if (open == 0) {
+									merged.push(r[0]);
+								}
+							}
+						}
+						finishgetboard(board, merged);
+					}));
+				}));
+			});
+		}
+
+		function getboardgift (board) {
+			getuser(function(user,uid){
+			});
+		}
+
 		switch(msg.cmd) {
 		case 'echo': 
 			//@cmd echo
 			//@nosession
 			//@desc 返回客户端发送的数据
 			sendobj(msg.data);
+			break;
+
+		// leaderboards
+		// board gift info stored in bitfield
+		case 'SET_Score':
+			//@cmd SET_Score
+			//@data score
+			//@desc 设置得分（如果得分比当前分数低则忽略）
+			getuser(function(user,uid){
+				try {
+					var newscore = Math.floor(msg.data.score);
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
+				db.zscore('score', uid, check(function(score){
+					if (newscore > score) {
+						db.zadd('score', newscore, uid, check(function(){
+							sendnil();
+						}));
+					} else {
+						sendnil();
+					}
+				}));
+			});
+			break;
+		case 'ADD_Contrib':
+			//@cmd ADD_Contrib
+			//@data contrib
+			//@desc 增加贡献值
+			getuser(function(user,uid){
+				try {
+					var addcontrib = Math.floor(msg.data.contrib);
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
+				db.zincrby('contrib', addcontrib, uid, check(function(contrib){
+					sendobj({contrib:contrib});
+				}));
+			});
+			break;
+		case 'RESET_ScoreBoard':
+			//@cmd RESET_Score
+			//@nosession
+			//@desc 重置得分排行榜
+			resetboard('score');
+			break;
+		case 'RESET_ContribBoard':
+			//@cmd RESET_ContribBoard
+			//@nosession
+			//@desc 重置贡献值排行榜
+			resetboard('contrib');
+			break;
+		case 'get_scoreboard':
+			//@cmd get_scoreboard
+			//@desc 获取得分排行榜
+			getboard('score', 5000);
+			break;
+		case 'get_contribboard':
+			//@cmd get_contribboard
+			//@desc 获取贡献度排行榜
+			getboard('contrib', 30000);
+			break;
+		case 'get_score_gift':
+			//@cmd get_score_gift
+			//@desc 获取积分奖励
+			getboardgift('score');
+			break;
+		case 'get_contrib_gift':
+			//@cmd get_contrib_gift
+			//@desc 获取贡献值奖励
+			getboardgift('contrib');
 			break;
 		case 'makeroom':
 			//@cmd makeroom
@@ -1080,7 +1275,7 @@ wss.on('connection', function(ws) {
 							.expire('activeitem', timeout)
 							.exec(checklist(3,function(res){
 								// set timeout for client use
-								trans.client().hmset('activeitem', {Timeout: timeout * 1000});
+								trans.client().hmset('activeitem', {ID: itemid, Timeout: timeout * 1000});
 								sendobj(trans.obj);
 							}));
 							break;
@@ -1118,7 +1313,7 @@ wss.on('connection', function(ws) {
 				try {
 					var itemid = msg.data.itemid;
 					var count = msg.data.count;
-					var credit = count * table.item[itemid].Credit;
+					var credit = count * table.item[itemid][12000];
 				} catch (e) {
 					senderr('data_err');
 					return;
