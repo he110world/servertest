@@ -473,7 +473,6 @@ wss.on('connection', function(ws) {
 							return a[0]-b[0];
 						});
 
-						console.log(ranges);
 						var open = 0;
 						var merged = [];
 						for (var i=0; i<ranges.length; i++) {
