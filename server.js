@@ -458,7 +458,7 @@ wss.on('connection', function(ws) {
 						}
 
 						// others
-						if (myrank > 9) {	// not in top10
+		//				if (myrank > 9) {	// not in top10
 							// top
 							// 0 -> min(9, boardmax)
 							ranges.push([0,1], [Math.min(9,boardmax),-1]);
@@ -467,7 +467,7 @@ wss.on('connection', function(ws) {
 							// bottom
 							// max(0, boardmax-9) -> boardmax
 							ranges.push([Math.max(0, boardmax-9),1], [boardmax,-1]);
-						}
+		//				}
 
 						ranges.sort(function(a,b){
 							return a[0]-b[0];
@@ -499,8 +499,37 @@ wss.on('connection', function(ws) {
 			});
 		}
 
-		function getboardgift (board) {
+		function getboardgift (board, max) {
 			getuser(function(user,uid){
+				// already get the gift?
+				db.getbit(board+'_gift', uid, check(function(got){
+					if (got) {
+						sendnil();
+					} else {
+						// on last leaderboard?
+						db.zrevrank(board+'_last', uid, check(function(rank){
+							if (rank===null || rank>max) {
+								rank = max+1;
+							}
+
+							db.setbit(board+'_gift', uid, 1, check(function(){
+								if (rank > max) {
+									sendnil();
+									return;
+								}
+
+								var giftid = 14001;	//TODO: real gift
+
+								db.incr('next_gift_id:'+uid, check2(function(index){	// two gifts for existing girl
+									var trans = new Transaction(db, uid);
+									trans.hsetjson('gift', index, new Gift(giftid), check(function(){
+										sendobj(trans.obj);
+									}));
+								}));
+							}));
+						}));
+					}
+				}));
 			});
 		}
 
@@ -579,12 +608,12 @@ wss.on('connection', function(ws) {
 		case 'get_score_gift':
 			//@cmd get_score_gift
 			//@desc 获取积分奖励
-			getboardgift('score');
+			getboardgift('score', 5000);
 			break;
 		case 'get_contrib_gift':
 			//@cmd get_contrib_gift
 			//@desc 获取贡献值奖励
-			getboardgift('contrib');
+			getboardgift('contrib', 30000);
 			break;
 		case 'makeroom':
 			//@cmd makeroom
