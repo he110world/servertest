@@ -1,0 +1,36 @@
+id,cmd,desc
+echo,{"cmd":"echo"},返回客户端发送的数据
+SET_Score,{"cmd":"SET_Score";"data":{"score":{0}};"session":{1}},设置得分（如果得分比当前分数低则忽略）
+ADD_Contrib,{"cmd":"ADD_Contrib";"data":{"contrib":{0}};"session":{1}},增加贡献值
+RESET_Score,{"cmd":"RESET_Score"},重置得分排行榜
+RESET_ContribBoard,{"cmd":"RESET_ContribBoard"},重置贡献值排行榜
+get_scoreboard,{"cmd":"get_scoreboard";"session":{0}},获取得分排行榜
+get_contribboard,{"cmd":"get_contribboard";"session":{0}},获取贡献度排行榜
+get_score_gift,{"cmd":"get_score_gift";"session":{0}},获取积分奖励
+get_contrib_gift,{"cmd":"get_contrib_gift";"session":{0}},获取贡献值奖励
+makeroom,{"cmd":"makeroom";"session":{0}},开房间
+joinroom,{"cmd":"joinroom";"data":{"roomid":{0}};"session":{1}},加入现有房间
+randroom,{"cmd":"randroom";"session":{0}},加入随机房间（TODO）
+quitroom,{"cmd":"quitroom";"session":{0}},退出当前房间
+roomchat,{"cmd":"roomchat";"data":{"msg":{0}};"session":{1}},房间内聊天
+rename,{"cmd":"rename";"data":{"nickname":{0}};"session":{1}},更改昵称
+ADD_Equip,{"cmd":"ADD_Equip";"data":{"id":{0}};"session":{1}},生成随机装备
+ADD_GirlExp,{"cmd":"ADD_GirlExp";"data":{"id":{0};"count":{1}};"session":{2}},加战姬经验
+ADD_RoleExp,{"cmd":"ADD_RoleExp";"data":{"count":{0}};"session":{1}},加角色经验
+ADD_Item,{"cmd":"ADD_Item";"data":{"id":{0};"count":{1}};"session":{2}},加物品
+requestfriend,{"cmd":"requestfriend";"data":{"target":{0}};"session":{1}},求加好友（target暂时为好友用户名）
+delfriend,{"cmd":"delfriend";"data":{"target":{0}};"session":{1}},删除好友
+acceptfriend,{"cmd":"acceptfriend";"data":{"target":{0}};"session":{1}},接受好友请求
+declinefriend,{"cmd":"declinefriend";"data":{"target":{0}};"session":{1}},拒绝好友请求
+usegift,{"cmd":"usegift";"data":{"index":{0}};"session":{1}},领取礼包
+useallgifts,{"cmd":"useallgifts";"session":{0}},领取全部礼包
+useitem,{"cmd":"useitem";"data":{"itemid":{0};"targetid":{1}};"session":{2}},使用物品(targetid可以是girl的id之类的值)
+getactiveitem,{"cmd":"getactiveitem";"session":{0}},获取当前正在使用的道具{ID:id Timeout:ms}
+sellitem,{"cmd":"sellitem";"data":{"itemid":{0};"count":{1}};"session":{2}},卖道具
+buyitem,{"cmd":"buyitem";"data":{"shopid":{0};"itemid":{1}};"session":{2}},买物品
+buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
+setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
+view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
+reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
+login,{"cmd":"login";"data":{"user":{0};"pass":{1}}},登录
+
