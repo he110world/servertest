@@ -32,10 +32,10 @@ console.log("Server started");
 var port = parseInt(process.argv[2]);
 var WebSocketServer = require('ws').Server;
 var wss = new WebSocketServer({port: port});
-var user2ws = {};	// user->ws
-var ws2user = {};
+var uid2ws = {};	// uid->ws
+var ws2uid = {};
 var appid = randomString(32);
-var room2user = {};
+var room2uid = {};
 
 function response (ws, cmd, data, id) {
 	if (ws.readyState != ws.OPEN) {
@@ -129,23 +129,23 @@ usersub.on('message', function(channel, message){
 	switch (msg.cmd) {
 	case 'kick':
 		if (appid != msg.appid) {	// don't kick yourself!
-			wss.kick(msg.user);
+			wss.kick(msg.uid);
 		}
 		break;
 	case 'notify':
-		wss.notify(msg.user, msg.msgstr);
+		wss.notify(msg.uid, msg.msgstr);
 		break;
 	}
 });
 
-function addRoomUser (roomid, user) {
-	room2user[roomid] = room2user[roomid] || {};
-	room2user[roomid][user] = 1;
+function addRoomUid (roomid, uid) {
+	room2uid[roomid] = room2uid[roomid] || {};
+	room2uid[roomid][uid] = 1;
 }
 
-function delRoomUser (roomid, user) {
-	if (room2user[roomid]) {
-		delete room2user[roomid][user];
+function delRoomUid (roomid, uid) {
+	if (room2uid[roomid]) {
+		delete room2uid[roomid][uid];
 	}
 }
 
@@ -154,14 +154,14 @@ roomsub.on('pmessage', function(pattern, channel, message){
 	var roomid = channel.split('.')[1];
 	
 	// find users in the room
-	var users = room2user[roomid];
-	if (users) {
+	var uids = room2uid[roomid];
+	if (uids) {
 		try {
 			var msg = JSON.parse(message);
 			var roomcast = function (cmd,data) {
 				var datastr = JSON.stringify({cmd:cmd,data:data});
-				for(var user in users) {
-					var ws = user2ws[user];
+				for(var uid in uids) {
+					var ws = uid2ws[uid];
 					if (ws) {
 						ws.send(datastr);
 					}
@@ -179,17 +179,17 @@ roomsub.on('pmessage', function(pattern, channel, message){
 			roomcast(msg.cmd, msg.data);
 			break;
 		case 'kill':
-			delete room2user[roomid];
+			delete room2uid[roomid];
 			break;
 		}
 	}
 });
 
 function removeWs (ws) {
-	var user = ws2user[ws];
-	if (user) {
-		delete ws2user[ws];
-		delete user2ws[user];
+	var uid = ws2uid[ws];
+	if (uid) {
+		delete ws2uid[ws];
+		delete uid2ws[uid];
 	}
 }
 
@@ -197,22 +197,22 @@ function roommsg (roomid, cmd, data) {
 	publishData(roompub, 'room.'+roomid, {cmd:cmd, data:data});
 }
 
-function notifymsg (user, msg) {
-	var ws = user2ws[user];
+function notifymsg (uid, msg) {
+	var ws = uid2ws[uid];
 	try {
 		var msgstr = JSON.stringify(msg);
 		if (ws) {	// same server : don't bother to PUB
 			ws.send(msgstr);
 		} else {	// different server : simply PUB
-			publishData(userpub, 'user', {cmd:'notify', user:user, msgstr:msgstr});
+			publishData(userpub, 'user', {cmd:'notify', uid:uid, msgstr:msgstr});
 		}
 	} catch (e) {
 		console.log(e);
 	}
 }
 
-function kickmsg (user) {
-	publishData(userpub, 'user', {cmd:'kick', user:user, appid:appid});
+function kickmsg (uid) {
+	publishData(userpub, 'user', {cmd:'kick', uid:uid, appid:appid});
 }
 
 var MAX_ROOM_SIZE = 4;
@@ -223,19 +223,19 @@ wss.on('connection', function(ws) {
 	});
 
 	ws.on('close', function(code, message) {
-		var user = ws2user[ws];
-		db.get('session:'+user, function(err, sess) {
-			if (user) {
-				if (code == 4001) {	// kick. code 4000-4999 can be used by application.
-					console.log('kick', sess);
-				} else {
+		var uid = ws2uid[ws];
+		if (uid) {
+			if (code == 4001) {	// kick. code 4000-4999 can be used by application.
+				console.log('kick ' + uid);
+			} else {
+				db.get('session:'+uid, check2(function(sess) {
 					console.log('close');
-					delete user2ws[user];
-					db.del('session:'+user, 'sessionuser:'+sess);
-				}
+					delete uid2ws[uid];
+					db.del('session:'+uid, 'sessionuser:'+sess);
+				}));
 			}
-		});
-		delete ws2user[ws];
+			delete ws2uid[ws];
+		}
 	});
 
 	ws.on('message', function(message) {
@@ -618,19 +618,19 @@ wss.on('connection', function(ws) {
 		case 'makeroom':
 			//@cmd makeroom
 			//@desc 开房间
-			getuser(function(user){
-				db.exists('roomid:'+user, check(function(exist){
+			getuser(function(user,uid){
+				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
 						senderr('already_in_room_err');
 					} else {
 						db.incr('next_room_id', check2(function(newid){
 							db
 							.multi()
-							.set('roomid:'+user, newid)
-							.lpush('room:'+newid, user)
+							.set('roomid:'+uid, newid)
+							.lpush('room:'+newid, uid)
 							.exec(checklist(2,function(data){
-								addRoomUser(newid, user);
-								sendobj({room:{roomid:newid, users:[user]}});
+								addRoomUid(newid, uid);
+								sendobj({room:{roomid:newid, users:[uid]}});
 							}));
 						}));
 					}	
@@ -641,8 +641,8 @@ wss.on('connection', function(ws) {
 			//@cmd joinroom
 			//@data roomid
 			//@desc 加入现有房间
-			getuser(function(user){
-				db.exists('roomid:'+user, check(function(exist){
+			getuser(function(user,uid){
+				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
 						senderr('already_in_room_err');
 					} else {
@@ -650,16 +650,16 @@ wss.on('connection', function(ws) {
 							var roomid = msg.data.roomid;
 							var room = 'room:'+roomid;
 							db.exists(room, check2err('room_not_exist',function(data){
-								db.lpush(room, user, check(function(count){
+								db.lpush(room, uid, check(function(count){
 									if (count > MAX_ROOM_SIZE) {	// room is full
 										db.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
 										senderr('room_full_err');
 									} else {
-										db.set('roomid:'+user, roomid, check(function(res){
+										db.set('roomid:'+uid, roomid, check(function(res){
 											db.lrange(room, 0, -1, check(function(users){
-												addRoomUser(roomid, user);
+												addRoomUid(roomid, uid);
 												sendobj({room:{users:users}});
-												roommsg(roomid, 'join', {user:user});
+												roommsg(roomid, 'join', {uid:uid});
 											}));
 										}));
 									}
@@ -675,29 +675,30 @@ wss.on('connection', function(ws) {
 		case 'randroom':
 			//@cmd randroom
 			//@desc 加入随机房间（TODO）
-			senderr('not_implemented_err');
+			getuser(function(user,uid){
+			});
 			break;
 		case 'quitroom':
 			//@cmd quitroom
 			//@desc 退出当前房间
-			getuser(function(user){
-				db.get('roomid:'+user, check2(function(roomid){
+			getuser(function(user,uid){
+				db.get('roomid:'+uid, check2(function(roomid){
 					db.llen('room:'+roomid, check(function(len){
 						if (len<2) { // destroy the room if it's empty
 							db.multi()
 							.del('room:'+roomid)
-							.del('roomid:'+user)
+							.del('roomid:'+uid)
 							.exec(checklist(2,function(){
 							roommsg(roomid, 'kill');
 								sendobj({room:null});
 							}));
 						} else { // tell others that I left the room
 							db.multi()
-							.del('roomid:'+user)
-							.lrem('room:'+roomid, 1, user)
+							.del('roomid:'+uid)
+							.lrem('room:'+roomid, 1, uid)
 							.exec(checklist(2,function(){
-							roommsg(roomid, 'quit', {user:user});
-								delRoomUser(roomid, user);
+							roommsg(roomid, 'quit', {ID:uid});
+								delRoomUid(roomid, uid);
 							}));
 						}
 					}));
@@ -708,16 +709,16 @@ wss.on('connection', function(ws) {
 			//@cmd roomchat
 			//@data msg
 			//@desc 房间内聊天
-			getuser(function(user){
-				db.get('roomid:'+user, check2(function(roomid){
-					roommsg(roomid, 'chat', {user:user, msg:msg.data.msg});
+			getuser(function(user,uid){
+				db.get('roomid:'+uid, check2(function(roomid){
+					roommsg(roomid, 'chat', {ID:uid, msg:msg.data.msg});
 				}));
 			});
 			break;
 		case 'roomsync':
-			getuser(function(user){
-				db.get('roomid:'+user, check2(function(roomid){
-					roommsg(roomid, 'sync', {user:user, data:msg.data});
+			getuser(function(user,uid){
+				db.get('roomid:'+uid, check2(function(roomid){
+					roommsg(roomid, 'sync', {uid:uid, data:msg.data});
 				}));
 			});
 			break;
@@ -875,11 +876,11 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.sadd('pendingfriends:'+target, user, check(function(){
+					db.sadd('pendingfriends:'+target, uid, check(function(){
 						sendnil();
 						var data = {};
 						data.pendingfriends = {};
-						data.pendingfriends[user] = 1;
+						data.pendingfriends[uid] = 1;
 						notifymsg(target, {cmd:'view', data:data});
 					}));
 				} catch (e) {
@@ -899,8 +900,8 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.srem('friends:'+user, target, check2(function(){
-						db.srem('friends:'+target, user, check2(function(){
+					db.srem('friends:'+uid, target, check2(function(){
+						db.srem('friends:'+target, uid, check2(function(){
 							var userdata = {};
 							userdata.friends = {};
 							userdata.friends[target] = null;
@@ -908,7 +909,7 @@ wss.on('connection', function(ws) {
 
 							var targetdata = {};
 							targetdata.friends = {};
-							targetdata.friends[user] = null;
+							targetdata.friends[uid] = null;
 							notifymsg(target, {cmd:'view', data:targetdata});
 						}));
 					}));
@@ -929,9 +930,9 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.srem('pendingfriends:'+user, target, check2(function(){
-						db.sadd('friends:'+user, target, check(function(){
-							db.sadd('friends:'+target, user, check(function(){
+					db.srem('pendingfriends:'+uid, target, check2(function(){
+						db.sadd('friends:'+uid, target, check(function(){
+							db.sadd('friends:'+target, uid, check(function(){
 								var userdata = {};
 								userdata.pendingfriends = {};
 								userdata.pendingfriends[target] = null;
@@ -941,7 +942,7 @@ wss.on('connection', function(ws) {
 
 								var targetdata = {};
 								targetdata.friends = {};
-								targetdata.friends[user] = 1;
+								targetdata.friends[uid] = 1;
 								notifymsg(target, {cmd:'view', data:targetdata});
 							}));
 						}));
@@ -960,7 +961,7 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.srem('pendingfriends:'+user, target, check2(function(){
+					db.srem('pendingfriends:'+uid, target, check2(function(){
 						var userdata = {};
 						userdata.pendingfriends = {};
 						userdata.pendingfriends[target] = null;
@@ -1634,7 +1635,7 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 					case 'room':
-						db.get('roomid:'+user, check(function(roomid){
+						db.get('roomid:'+id, check(function(roomid){
 							if (roomid) {
 								db.lrange('room:'+roomid, 0, -1, check(function(room){
 									sendobj({room:{roomid:roomid, users:room}});
@@ -1651,7 +1652,7 @@ wss.on('connection', function(ws) {
 						break;
 					case 'friends':
 					case 'pendingfriends':
-						db.smembers(viewname+':'+user, check(function(friendset){
+						db.smembers(viewname+':'+uid, check(function(friendset){
 							var userdata = {};
 							userdata[viewname] = friendset; //friends;
 							sendobj(userdata);
@@ -1730,45 +1731,48 @@ wss.on('connection', function(ws) {
 				if (pass != storedpass) {
 					senderr('pass_err');
 				} else {
-					// session exist - multiple logins
-					db.get('session:'+user, check(function(oldsess){
-						var ok = true;
-						if (oldsess) {
-							// kick the prev user
-							var prevws = user2ws[user];
-							if (prevws) {	// same machine
-								if (prevws != ws) {
-									// kick
-									prevws.close(4001);
-									removeWs(prevws);
-								} else {
-									senderr('already_loggedin_err');
-									ok = false;
-								}
-							} else {
-								kickmsg(user);
-							}
-						} 
-						if (ok) {
-							generateSession(function(session){
-								// destroy previous sessionuser
-								db.getset('session:'+user, session, check(function(oldsession){
-									db.multi()
-									.del('sessionuser:'+oldsession, session)
-									.set('sessionuser:'+session, user)
-									.exec(checklist(2,function(res){
-										user2ws[user] = ws;
-										ws2user[ws] = user;
-										sendobj({session:session});
+					db.get('account:'+user+':id', check2(function(uid){
 
-										// in a room?
-										db.get('roomid:'+user, check(function(roomid){
-											addRoomUser(roomid, user);
+						// session exist - multiple logins
+						db.get('session:'+uid, check(function(oldsess){
+							var ok = true;
+							if (oldsess) {
+								// kick the prev user
+								var prevws = uid2ws[uid];
+								if (prevws) {	// same machine
+									if (prevws != ws) {
+										// kick
+										prevws.close(4001);
+										removeWs(prevws);
+									} else {
+										senderr('already_loggedin_err');
+										ok = false;
+									}
+								} else {
+									kickmsg(uid);
+								}
+							} 
+							if (ok) {
+								generateSession(function(session){
+									// destroy previous sessionuser
+									db.getset('session:'+uid, session, check(function(oldsession){
+										db.multi()
+										.del('sessionuser:'+oldsession)
+										.set('sessionuser:'+session, user)
+										.exec(checklist(2,function(res){
+											uid2ws[uid] = ws;
+											ws2uid[ws] = uid;
+											sendobj({session:session});
+
+											// in a room?
+											db.get('roomid:'+uid, check(function(roomid){
+												addRoomUid(roomid, uid);
+											}));
 										}));
 									}));
-								}));
-							});	
-						}
+								});	
+							}
+						}));
 					}));
 				}
 			}));
@@ -1783,16 +1787,16 @@ wss.broadcast = function broadcast(data) {
   }
 }
 
-wss.kick = function (user) {
-	var ws = user2ws[user];
+wss.kick = function (uid) {
+	var ws = uid2ws[uid];
 	if (ws) {
 		ws.close();
 		removeWs(ws);
 	}
 }
 
-wss.notify = function (user, datastr) {
-	var ws = user2ws[user];
+wss.notify = function (uid, datastr) {
+	var ws = uid2ws[uid];
 	if (ws) {
 		ws.send(datastr);
 	}

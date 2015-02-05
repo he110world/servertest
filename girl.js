@@ -16,6 +16,7 @@ Girl.prototype.newGirl = function (table, id) {
 	var girl = table.girl[id];
 	this.Cost = girl.Cost;
 	this.Rank = girl.Rank;
+	this.Birth = Date.now();
 }
 
 Girl.prototype.buyGirl = function (table, itemcounts) {
