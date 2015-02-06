@@ -2,12 +2,13 @@ id,cmd,desc
 echo,{"cmd":"echo"},返回客户端发送的数据
 SET_Score,{"cmd":"SET_Score";"data":{"score":{0}};"session":{1}},设置得分（如果得分比当前分数低则忽略）
 ADD_Contrib,{"cmd":"ADD_Contrib";"data":{"contrib":{0}};"session":{1}},增加贡献值
-RESET_Score,{"cmd":"RESET_Score"},重置得分排行榜
+RESET_ScoreBoard,{"cmd":"RESET_ScoreBoard"},重置得分排行榜
 RESET_ContribBoard,{"cmd":"RESET_ContribBoard"},重置贡献值排行榜
 get_scoreboard,{"cmd":"get_scoreboard";"session":{0}},获取得分排行榜
 get_contribboard,{"cmd":"get_contribboard";"session":{0}},获取贡献度排行榜
 get_score_gift,{"cmd":"get_score_gift";"session":{0}},获取积分奖励
 get_contrib_gift,{"cmd":"get_contrib_gift";"session":{0}},获取贡献值奖励
+webrecruit,{"cmd":"webrecruit";"data":{"":{0}};"session":{1}},
 makeroom,{"cmd":"makeroom";"data":{"teamid":{0};"mapid":{1}};"session":{2}},开房间
 joinroom,{"cmd":"joinroom";"data":{"roomid":{0};"teamid":{1};"mapid":{2}};"session":{3}},加入现有房间
 randroom,{"cmd":"randroom";"data":{"teamid":{0};"mapid":{1}};"session":{2}},加入随机房间（TODO）
