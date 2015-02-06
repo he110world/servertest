@@ -19,6 +19,8 @@ var usersub = redis.createClient();
 var roompub = redis.createClient();
 var roomsub = redis.createClient();
 var adminsub = redis.createClient();
+var recruitpub = redis.createClient();
+var recruitsub = redis.createClient();
 var db = redis.createClient();
 var table = require('./table.json');
 var Transaction = require('./transaction');
@@ -228,11 +230,11 @@ wss.on('connection', function(ws) {
 			if (code == 4001) {	// kick. code 4000-4999 can be used by application.
 				console.log('kick ' + uid);
 			} else {
-				db.get('session:'+uid, check2(function(sess) {
+				db.get('session:'+uid, function(err,sess) {
 					console.log('close');
 					delete uid2ws[uid];
 					db.del('session:'+uid, 'sessionuser:'+sess);
-				}));
+				});
 			}
 			delete ws2uid[ws];
 		}
@@ -393,6 +395,7 @@ wss.on('connection', function(ws) {
 					.del(board+'_gift')				// remove gift info
 					.rename(board, board+'_last')	// move to last week
 					.exec(check(function(){
+						console.log('reset');
 						sendnil();
 					}));
 				} else {
@@ -425,7 +428,22 @@ wss.on('connection', function(ws) {
 								finallist.push(player);
 							}
 						}
-						sendobj(obj);
+
+						// role:<uid>.nickname, team.1:uid
+						cnt = 0;
+						finallist.forEach(function(player, j){
+							db.hget('role:'+finallist[j].ID, 'nickname', check(function(nick){
+								db.lindex('team.1:'+finallist[j].ID, 0, check(function(girlid){
+									++cnt;
+									finallist[j].Nick = nick;
+									finallist[j].Girl = girlid;
+
+									if (cnt ==finallist.length) {
+										sendobj(obj);
+									}
+								}));
+							}));
+						});
 					}
 				}));
 			}
@@ -508,6 +526,7 @@ wss.on('connection', function(ws) {
 					} else {
 						// on last leaderboard?
 						db.zrevrank(board+'_last', uid, check(function(rank){
+							var oldrank = rank;
 							if (rank===null || rank>max) {
 								rank = max+1;
 							}
@@ -522,7 +541,10 @@ wss.on('connection', function(ws) {
 
 								db.incr('next_gift_id:'+uid, check2(function(index){	// two gifts for existing girl
 									var trans = new Transaction(db, uid);
-									trans.hsetjson('gift', index, new Gift(giftid), check(function(){
+									trans.multi()
+									.hset('role', 'OldRank', oldrank)
+									.hsetjson('gift', index, new Gift(giftid))
+									.exec(check(function(){
 										sendobj(trans.obj);
 									}));
 								}));
@@ -531,6 +553,22 @@ wss.on('connection', function(ws) {
 					}
 				}));
 			});
+		}
+
+		function getlvrange (lv) {
+			var lvmin = 1;
+			var lvmax = 999;
+			if (lv >= 100) {
+				lvmin = Math.floor(lv / 100) * 100;
+				lvmax = lvmin + 1000;
+			} else if (lv >= 50) {
+				lvmin = 50;
+				lvmax = 100;
+			} else {
+				lvmin = 1;
+				lvmax = 50;
+			}
+			return {lvmin:lvmin, lvmax:lvmax};
 		}
 
 		switch(msg.cmd) {
@@ -584,7 +622,7 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'RESET_ScoreBoard':
-			//@cmd RESET_Score
+			//@cmd RESET_ScoreBoard
 			//@nosession
 			//@desc 重置得分排行榜
 			resetboard('score');
@@ -615,24 +653,44 @@ wss.on('connection', function(ws) {
 			//@desc 获取贡献值奖励
 			getboardgift('contrib', 30000);
 			break;
+		case 'webrecruit':
+			//@cmd webrecruit
+			//@data 
+			break;
 		case 'makeroom':
 			//@cmd makeroom
+			//@data teamid
+			//@data mapid
 			//@desc 开房间
 			getuser(function(user,uid){
+				try {
+					var teamid = msg.data.teamid;
+					var mapid = msg.data.mapid;
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
 				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
 						senderr('already_in_room_err');
 					} else {
-						db.incr('next_room_id', check2(function(newid){
-							db
-							.multi()
-							.set('roomid:'+uid, newid)
-							.lpush('room:'+newid, uid)
-							.exec(checklist(2,function(data){
-								addRoomUid(newid, uid);
-								sendobj({room:{roomid:newid, users:[uid]}});
+				//		db.hget('role:'+uid, 'Lv', check(function(lv){
+				//			var range = getlvrange(lv);
+							db.incr('next_room_id', check2(function(newid){
+				//				var roomqry = 'roomqry:'+range.lvmin+':'+range.lvmax+':'+mapid;
+
+								db.multi()
+								.set('roomid:'+uid, newid)
+				//				.set('roominfo:'+uid, JSON.stringify({t:teamid, q:roomqry}))	//TODO: DELETE THIS!!!
+				//				.sadd(roomqry, newid)											//TODO: DELETE THIS!!!
+								.lpush('room:'+newid, uid)
+								.exec(checklist(4,function(data){
+									addRoomUid(newid, uid);
+									sendobj({room:{roomid:newid, users:[uid], teams:[teamid]}});
+								}));
 							}));
-						}));
+				//		}));
 					}	
 				}));
 			});
@@ -640,6 +698,8 @@ wss.on('connection', function(ws) {
 		case 'joinroom':
 			//@cmd joinroom
 			//@data roomid
+			//@data teamid
+			//@data mapid
 			//@desc 加入现有房间
 			getuser(function(user,uid){
 				db.exists('roomid:'+uid, check(function(exist){
@@ -674,6 +734,8 @@ wss.on('connection', function(ws) {
 			break;
 		case 'randroom':
 			//@cmd randroom
+			//@data teamid
+			//@data mapid
 			//@desc 加入随机房间（TODO）
 			getuser(function(user,uid){
 			});
