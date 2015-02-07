@@ -14,14 +14,9 @@ if (cluster.isMaster) {
 } else {
 */
 var redis = require('redis');
-var userpub = redis.createClient();
-var usersub = redis.createClient();
-var roompub = redis.createClient();
-var roomsub = redis.createClient();
-var adminsub = redis.createClient();
-var recruitpub = redis.createClient();
-var recruitsub = redis.createClient();
 var db = redis.createClient();
+var pub = redis.createClient();
+var sub = redis.createClient();
 var table = require('./table.json');
 var Transaction = require('./transaction');
 var Role = require('./role');
@@ -37,7 +32,6 @@ var wss = new WebSocketServer({port: port});
 var uid2ws = {};	// uid->ws
 var ws2uid = {};
 var appid = randomString(32);
-var room2uid = {};
 
 function response (ws, cmd, data, id) {
 	if (ws.readyState != ws.OPEN) {
@@ -89,102 +83,119 @@ function generateSession (cb) {
 	cb(session);
 }
 
-adminsub.subscribe('admin');
-adminsub.on('message', function(channel, message){
-	try {
-		var msg = JSON.parse(message);
-	} catch(e) {
-		msg = {};
-		console.log(e);
-	}
-	switch (msg.cmd) {
-		case 'reloadtable':
-			try {
-				var fs = require("fs");
-				table = JSON.parse(fs.readFileSync("./table.json", "utf8"));
-			} catch (e) {
-				console.log(e);
-			}
-			break;
-		case 'broadcast':
-			if (msg.p1) {
-				wss.broadcast(msg.p1);
-			}
-			break;
-		case 'kick':
-			if (msg.p1) {
-				wss.kick(msg.p1);
-			}
-			break;
-	}
-	
-});
-
-usersub.subscribe('user');
-usersub.on('message', function(channel, message){
-	try {
-		var msg = JSON.parse(message);
-	} catch(e) {
-		msg = {};
-		console.log(e);
-	}
-	switch (msg.cmd) {
-	case 'kick':
-		if (appid != msg.appid) {	// don't kick yourself!
-			wss.kick(msg.uid);
-		}
-		break;
-	case 'notify':
-		wss.notify(msg.uid, msg.msgstr);
-		break;
-	}
-});
-
-function addRoomUid (roomid, uid) {
-	room2uid[roomid] = room2uid[roomid] || {};
-	room2uid[roomid][uid] = 1;
+function Teammate (uid) {
+	this.role = {ID:uid};
+	this.team = [];
+	this.girl = {};
 }
 
-function delRoomUid (roomid, uid) {
-	if (room2uid[roomid]) {
-		delete room2uid[roomid][uid];
-	}
+Teammate.prototype.initRole = function (roleData) {
+	this.role.RoomTeam = roleData[0];
+	this.role.Lv = roleData[1];
+	this.role.Nick = roleData[2];
 }
 
-roomsub.psubscribe('room.*');	//psubscribe -> pmessage
-roomsub.on('pmessage', function(pattern, channel, message){
-	var roomid = channel.split('.')[1];
-	
-	// find users in the room
-	var uids = room2uid[roomid];
-	if (uids) {
-		try {
-			var msg = JSON.parse(message);
-			var roomcast = function (cmd,data) {
-				var datastr = JSON.stringify({cmd:cmd,data:data});
-				for(var uid in uids) {
-					var ws = uid2ws[uid];
-					if (ws) {
-						ws.send(datastr);
+Teammate.prototype.initTeam = function (teamData) {
+	this.team = teamData;
+}
+
+Teammate.prototype.addGirl = function (girlData) {
+	this.girl[girlData.ID] = girlData;
+}
+
+
+sub.psubscribe('recruit.*');
+sub.on('pmessage', function(pattern, channel, message){
+	if (pattern == 'recruit.*') {
+		var cmd = channel.split('.')[1];
+		switch (cmd) {
+			case 'rooms':
+				//[roomid,roomid,...]
+				if (message.length > 0) {
+					var roomids = message.split(',');
+
+					// find room members on this server
+					roomids.forEach(function(roomid, i){
+						db.lrange('room.'+roomid, 0, -1, function(err, uids){
+							for (var i=0; i<uids.length; i++) {
+								wss.sendcmd(uids[i], 'roomdirty');
+							}
+						});
+					});
+				}
+				break;
+			case 'err':
+				//[uid,uid,...]
+				if (message.length > 0) {
+					var uids = message.split(',');
+					for (var i=0; i<uids.length; i++) {
+						wss.sendcmd(uids[i], 'joinerr');
 					}
 				}
-			}
-		} catch(e) {
-			msg = {};
-		}
-
-		switch (msg.cmd) {
-		case 'sync':	// sync properties with other players
-		case 'chat':
-		case 'quit':
-		case 'join':
-			roomcast(msg.cmd, msg.data);
-			break;
-		case 'kill':
-			delete room2uid[roomid];
-			break;
+				break;
 		}
 	}
+});
+
+sub.subscribe('admin');
+sub.subscribe('user');
+sub.subscribe('room');
+sub.on('message', function(channel, message){
+	try {
+		var msg = JSON.parse(message);
+	} catch(e) {
+		msg = {};
+		console.log(e);
+	}
+
+	if (channel == 'room') {
+		var roomid = msg.id;
+		
+		// find users in the room
+		db.lrange('room.'+roomid, 0, -1, function(err, uids){
+			if (msg.op == 'chat') {
+				for (var i=0; i<uids.length; i++) {
+					wss.sendobj(uids[i], 'chat', {msg:msg.data});
+				}
+			} else if (msg.op == 'quit') {
+				for (var i=0; i<uids.length; i++) {
+					wss.sendcmd(uids[i], 'roomdirty');
+				}
+			}
+		});
+	} else if (channel == 'user') {
+		switch (msg.cmd) {
+			case 'kick':
+				if (appid != msg.appid) {	// don't kick yourself!
+					wss.kick(msg.uid);
+				}
+				break;
+			case 'notify':
+				wss.notify(msg.uid, msg.msgstr);
+				break;
+		}
+	} else if (channel == 'admin') {
+		switch (msg.cmd) {
+			case 'reloadtable':
+				try {
+					var fs = require("fs");
+					table = JSON.parse(fs.readFileSync("./table.json", "utf8"));
+				} catch (e) {
+					console.log(e);
+				}
+				break;
+			case 'broadcast':
+				if (msg.p1) {
+					wss.broadcast(msg.p1);
+				}
+				break;
+			case 'kick':
+				if (msg.p1) {
+					wss.kick(msg.p1);
+				}
+				break;
+		}
+	} 
 });
 
 function removeWs (ws) {
@@ -196,7 +207,7 @@ function removeWs (ws) {
 }
 
 function roommsg (roomid, cmd, data) {
-	publishData(roompub, 'room.'+roomid, {cmd:cmd, data:data});
+	publishData(pub, 'room', {id:roomid, op:cmd, data:data});
 }
 
 function notifymsg (uid, msg) {
@@ -206,7 +217,7 @@ function notifymsg (uid, msg) {
 		if (ws) {	// same server : don't bother to PUB
 			ws.send(msgstr);
 		} else {	// different server : simply PUB
-			publishData(userpub, 'user', {cmd:'notify', uid:uid, msgstr:msgstr});
+			publishData(pub, 'user', {cmd:'notify', uid:uid, msgstr:msgstr});
 		}
 	} catch (e) {
 		console.log(e);
@@ -214,7 +225,7 @@ function notifymsg (uid, msg) {
 }
 
 function kickmsg (uid) {
-	publishData(userpub, 'user', {cmd:'kick', uid:uid, appid:appid});
+	publishData(pub, 'user', {cmd:'kick', uid:uid, appid:appid});
 }
 
 var MAX_ROOM_SIZE = 4;
@@ -571,6 +582,45 @@ wss.on('connection', function(ws) {
 			return {lvmin:lvmin, lvmax:lvmax};
 		}
 
+		function makeroom (uid) {
+			db.incr('next_room_id', check2(function(newid){
+				db.multi()
+				.set('roomid:'+uid, newid)
+				.lpush('room:'+newid, uid)
+//				.expire('roomid:'+uid, 1800)	//TODO: real expire time
+//				.expire('room:'+newid, 1800)
+				.exec(checklist(2,function(data){
+					sendobj({room:{roomid:newid, users:[uid]}});
+				}));
+			}));
+		}
+
+		function quitroom (uid, cb) {
+			db.get('roomid:'+uid, check2(function(roomid){
+				db.llen('room:'+roomid, check(function(len){
+					if (len<2) { // destroy the room if it's empty
+						db.multi()
+						.del('room:'+roomid)
+						.del('roomid:'+uid)
+						.exec(checklist(2,function(){
+							if (typeof cb == 'function') {
+								cb();
+							}
+						}));
+					} else { // tell others that I left the room
+						db.multi()
+						.del('roomid:'+uid)
+						.lrem('room:'+roomid, 1, uid)
+						.exec(checklist(2,function(){
+							if (typeof cb == 'function') {
+								cb();
+							}
+						}));
+					}
+				}));
+			}));
+		}
+
 		switch(msg.cmd) {
 		case 'echo': 
 			//@cmd echo
@@ -653,44 +703,70 @@ wss.on('connection', function(ws) {
 			//@desc 获取贡献值奖励
 			getboardgift('contrib', 30000);
 			break;
+		case 'setroomteam':
+			//@cmd setroomteam
+			//@data teamid
+			//@desc 选择多人模式出击战姬
+			try {
+				var teamid = Math.floor(msg.data.teamid);
+				if (!(teamid>=0 && teamid<4)) {
+					throw new Error();
+				}
+			} catch (e) {
+				senderr('data_err');
+				return;
+			}
+
+			getuser(function(user,uid){
+				var trans = new Transaction(db, uid);
+				trans.hset('role', 'RoomTeam', teamid, check(function(){
+					sendobj(trans.obj);
+				}));
+			});
+			break;
 		case 'webrecruit':
 			//@cmd webrecruit
-			//@data 
+			//@data roomid
+			//@data lvmin
+			//@data lvmax
+			//@data mapid
+			//@desc 组队募集
+			try {
+				var roomid = msg.data.roomid;
+				var lvmin = msg.data.lvmin;
+				var lvmax = msg.data.lvmax;
+				var mapid = msg.data.mapid;
+				if (!roomid || !lvmin || !lvmax || !mapid) {
+					throw new Error();
+				}
+			} catch (e) {
+				senderr('data_err');
+				return;
+			}
+
+			getuser(function(user,uid){
+				var data = [roomid, lvmin, lvmax, mapid];
+				pub.publish('roomcmd.recruit', data.toString());
+				sendnil();
+			});
 			break;
 		case 'makeroom':
 			//@cmd makeroom
-			//@data teamid
 			//@data mapid
 			//@desc 开房间
-			getuser(function(user,uid){
-				try {
-					var teamid = msg.data.teamid;
-					var mapid = msg.data.mapid;
-				} catch (e) {
-					senderr('data_err');
-					return;
-				}
+			try {
+				var mapid = msg.data.mapid;
+			} catch (e) {
+				senderr('data_err');
+				return;
+			}
 
+			getuser(function(user,uid){
 				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
-						senderr('already_in_room_err');
+						quitroom(uid, makeroom);
 					} else {
-				//		db.hget('role:'+uid, 'Lv', check(function(lv){
-				//			var range = getlvrange(lv);
-							db.incr('next_room_id', check2(function(newid){
-				//				var roomqry = 'roomqry:'+range.lvmin+':'+range.lvmax+':'+mapid;
-
-								db.multi()
-								.set('roomid:'+uid, newid)
-				//				.set('roominfo:'+uid, JSON.stringify({t:teamid, q:roomqry}))	//TODO: DELETE THIS!!!
-				//				.sadd(roomqry, newid)											//TODO: DELETE THIS!!!
-								.lpush('room:'+newid, uid)
-								.exec(checklist(4,function(data){
-									addRoomUid(newid, uid);
-									sendobj({room:{roomid:newid, users:[uid], teams:[teamid]}});
-								}));
-							}));
-				//		}));
+						makeroom(uid);
 					}	
 				}));
 			});
@@ -698,10 +774,34 @@ wss.on('connection', function(ws) {
 		case 'joinroom':
 			//@cmd joinroom
 			//@data roomid
-			//@data teamid
 			//@data mapid
 			//@desc 加入现有房间
+			try {
+				var roomid = msg.data.roomid;
+				var mapid = msg.data.mapid;
+				if (!roomid || !mapid) {
+					throw new Error();
+				}
+			} catch(e) {
+				senderr('data_err');
+				return;
+			}
+
 			getuser(function(user,uid){
+				var pubstr = [uid,roomid,mapid].toString();
+				db.exists('roomid:'+uid, check(function(exist){
+					if (exist) {
+						quitroom(uid, function(){
+							pub.publish('roomcmd.join', pubstr);
+						});
+					} else {
+						pub.publish('roomcmd.join', pubstr);
+					}	
+				}));
+
+				sendnil();
+
+			/*
 				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
 						senderr('already_in_room_err');
@@ -730,42 +830,49 @@ wss.on('connection', function(ws) {
 						}
 					}
 				}));
+				*/
 			});
 			break;
-		case 'randroom':
-			//@cmd randroom
-			//@data teamid
+		case 'searchroom':
+			//@cmd searchroom
 			//@data mapid
 			//@desc 加入随机房间（TODO）
+			try {
+				var mapid = msg.data.mapid;
+				if (!mapid) {
+					throw new Error();
+				}
+			} catch(e) {
+				senderr('data_err');
+				return;
+			}
+
 			getuser(function(user,uid){
+				function doSearch () {
+					db.hget('role:'+uid, 'Lv', check(function(lv){
+						pub.publish('roomcmd.search', [uid, lv, mapid].toString());
+						sendnil();
+					}));
+				}
+
+				db.exists('roomid:'+uid, check(function(exist){
+					if (exist) {
+						quitroom(uid, doSearch);
+					} else {
+						doSearch();
+					}	
+				}));
 			});
 			break;
 		case 'quitroom':
 			//@cmd quitroom
 			//@desc 退出当前房间
 			getuser(function(user,uid){
-				db.get('roomid:'+uid, check2(function(roomid){
-					db.llen('room:'+roomid, check(function(len){
-						if (len<2) { // destroy the room if it's empty
-							db.multi()
-							.del('room:'+roomid)
-							.del('roomid:'+uid)
-							.exec(checklist(2,function(){
-							roommsg(roomid, 'kill');
-								sendobj({room:null});
-							}));
-						} else { // tell others that I left the room
-							db.multi()
-							.del('roomid:'+uid)
-							.lrem('room:'+roomid, 1, uid)
-							.exec(checklist(2,function(){
-							roommsg(roomid, 'quit', {ID:uid});
-								delRoomUid(roomid, uid);
-							}));
-						}
-					}));
-				}));
+				quitroom(uid, function(){
+					sendobj({room:null});
+				});
 			});
+
 			break;
 		case 'roomchat':
 			//@cmd roomchat
@@ -774,13 +881,6 @@ wss.on('connection', function(ws) {
 			getuser(function(user,uid){
 				db.get('roomid:'+uid, check2(function(roomid){
 					roommsg(roomid, 'chat', {ID:uid, msg:msg.data.msg});
-				}));
-			});
-			break;
-		case 'roomsync':
-			getuser(function(user,uid){
-				db.get('roomid:'+uid, check2(function(roomid){
-					roommsg(roomid, 'sync', {uid:uid, data:msg.data});
 				}));
 			});
 			break;
@@ -1707,6 +1807,59 @@ wss.on('connection', function(ws) {
 							}
 						}));
 						break;
+					case 'roommates':
+						// role:<uid> {RoomTeam, Lv, Nick}
+						// team.<role.RoomTeam>:<uid> -> [girlId1, girlId2, ...] -> girl.<girlId>:<uid>
+						try {
+							var uids = msg.data.id.toString().split('$');
+						} catch (e) {
+							senderr('data_err');
+							return;
+						}
+						var cnt = 0;
+						var mates = {};
+						uids.forEach(function(uid, i){
+							// get role 
+							db.hmget('role:'+uid, ['RoomTeam', 'Lv', 'Nick'], checklist(3, function(data){
+								var mate = new Teammate(uid);
+								mates[uid] = mate;
+								mate.initRole(data);
+
+								function finish () {
+									++cnt;
+									if (cnt == uids.length) {
+										sendobj(mates);
+									}
+								}
+
+								// get team
+								if (mate.role.RoomTeam) {
+									db.lrange('team.'+mate.role.RoomTeam+':'+uid, 0, -1, check(function(team){
+										if (team.length > 0) {
+											mate.initTeam(team);
+
+											// get girls
+											var girlcnt = 0;
+											team.forEach(function(girlId, j){
+												db.hgetall('girl.'+girlId+':'+uid, check(function(girl){
+													++girlcnt;
+													mate.addGirl(girl);
+
+													if (girlcnt == team.length) {
+														finish();
+													}
+												}));
+											});
+										} else {	// empty team
+											finish();
+										}
+									}));
+								} else {	// no team
+									finish();
+								}
+							}));
+						});
+						break;
 					case 'item':
 						trans.hgetall('item', check(function(item){
 							sendobj(trans.obj);
@@ -1827,9 +1980,11 @@ wss.on('connection', function(ws) {
 											sendobj({session:session});
 
 											// in a room?
+											/*
 											db.get('roomid:'+uid, check(function(roomid){
 												addRoomUid(roomid, uid);
 											}));
+											*/
 										}));
 									}));
 								});	
@@ -1861,6 +2016,24 @@ wss.notify = function (uid, datastr) {
 	var ws = uid2ws[uid];
 	if (ws) {
 		ws.send(datastr);
+	}
+}
+
+wss.sendcmd = function (uid, cmd) {
+	var ws = uid2ws[uid];
+	if (ws) {
+		ws.send(JSON.stringify({cmd:cmd}));
+	}
+}
+
+wss.sendobj = function (uid, cmd, obj) {
+	var ws = uid2ws[uid];
+	if (ws) {
+		try {
+			var datastr = JSON.stringify({cmd:cmd, data:obj});
+			ws.send(datastr);
+		} catch (e) {
+		}
 	}
 }
 
