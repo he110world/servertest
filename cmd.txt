@@ -8,10 +8,11 @@ get_scoreboard,{"cmd":"get_scoreboard";"session":{0}},获取得分排行榜
 get_contribboard,{"cmd":"get_contribboard";"session":{0}},获取贡献度排行榜
 get_score_gift,{"cmd":"get_score_gift";"session":{0}},获取积分奖励
 get_contrib_gift,{"cmd":"get_contrib_gift";"session":{0}},获取贡献值奖励
-webrecruit,{"cmd":"webrecruit";"data":{"":{0}};"session":{1}},
-makeroom,{"cmd":"makeroom";"data":{"teamid":{0};"mapid":{1}};"session":{2}},开房间
-joinroom,{"cmd":"joinroom";"data":{"roomid":{0};"teamid":{1};"mapid":{2}};"session":{3}},加入现有房间
-randroom,{"cmd":"randroom";"data":{"teamid":{0};"mapid":{1}};"session":{2}},加入随机房间（TODO）
+setroomteam,{"cmd":"setroomteam";"data":{"teamid":{0}};"session":{1}},选择多人模式出击战姬
+webrecruit,{"cmd":"webrecruit";"data":{"roomid":{0};"lvmin":{1};"lvmax":{2};"mapid":{3}};"session":{4}},组队募集
+makeroom,{"cmd":"makeroom";"data":{"mapid":{0}};"session":{1}},开房间
+joinroom,{"cmd":"joinroom";"data":{"roomid":{0};"mapid":{1}};"session":{2}},加入现有房间
+searchroom,{"cmd":"searchroom";"data":{"mapid":{0}};"session":{1}},加入随机房间（TODO）
 quitroom,{"cmd":"quitroom";"session":{0}},退出当前房间
 roomchat,{"cmd":"roomchat";"data":{"msg":{0}};"session":{1}},房间内聊天
 rename,{"cmd":"rename";"data":{"nickname":{0}};"session":{1}},更改昵称
