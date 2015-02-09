@@ -155,12 +155,13 @@ sub.on('message', function(channel, message){
 		var roomid = msg.id;
 		
 		// find users in the room
-		db.lrange('room.'+roomid, 0, -1, function(err, uids){
+		db.lrange('room:'+roomid, 0, -1, function(err, uids){
 			if (msg.op == 'chat') {
 				for (var i=0; i<uids.length; i++) {
 					wss.sendobj(uids[i], 'chat', {msg:msg.data});
 				}
 			} else if (msg.op == 'quit') {
+				console.log('send quit',uids);
 				for (var i=0; i<uids.length; i++) {
 					wss.sendcmd(uids[i], 'roomdirty');
 				}
@@ -292,6 +293,7 @@ wss.on('connection', function(ws) {
 		function check (cb) {
 			return function (err, data) {
 				if (err) {
+					console.log(1,err);
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
 				} else {
 					if (typeof cb == 'function') {
@@ -304,6 +306,7 @@ wss.on('connection', function(ws) {
 		function check2 (cb) {
 			return function (err, data) {
 				if (err || !data) {
+					console.log(2,err);
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
 				} else {
 					if (typeof cb == 'function') {
@@ -316,6 +319,7 @@ wss.on('connection', function(ws) {
 		function checklist (len, cb) {
 			return function (err, data) {
 				if (err || !data || data.length!=len) {
+					console.log('list',err);
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
 				} else {
 					if (typeof cb == 'function') {
@@ -328,6 +332,7 @@ wss.on('connection', function(ws) {
 		function check2err (errmsg, cb) {
 			return function (err, data) {
 				if (err) {
+					console.log('2err',err);
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
 				} else if (!data) {
 					responseErr(ws, msg.cmd, errmsg, msg.id);
@@ -599,12 +604,13 @@ wss.on('connection', function(ws) {
 		}
 
 		function quitroom (uid, cb) {
-			db.get('roomid:'+uid, check2(function(roomid){
+			db.get('roomid:'+uid, check(function(roomid){
+				console.log('quitroom',uid,roomid);
 				db.lrange('room:'+roomid, 0, -1, check(function(room){
 					// not in this room
 					if (room.indexOf(uid) == -1) {
 						db.del('roomid:'+uid, check(function(){
-							cb(uid);
+							cb(uid,roomid);
 						}));
 						return;
 					}
@@ -614,14 +620,14 @@ wss.on('connection', function(ws) {
 						.del('room:'+roomid)
 						.del('roomid:'+uid)
 						.exec(checklist(2,function(){
-							cb(uid);
+							cb(uid,roomid);
 						}));
 					} else { // tell others that I left the room
 						db.multi()
 						.del('roomid:'+uid)
 						.lrem('room:'+roomid, 1, uid)
 						.exec(checklist(2,function(){
-							cb(uid);
+							cb(uid,roomid);
 						}));
 					}
 				}));
@@ -875,8 +881,9 @@ wss.on('connection', function(ws) {
 			//@cmd quitroom
 			//@desc 退出当前房间
 			getuser(function(user,uid){
-				quitroom(uid, function(){
-					sendobj({room:null});
+				quitroom(uid, function(uid,roomid){
+					roommsg(roomid, 'quit');
+					sendnil();
 				});
 			});
 
@@ -950,7 +957,7 @@ wss.on('connection', function(ws) {
 					var girlkey = 'girl.'+girlid+':'+uid;
 					db.hmget(girlkey, query, check2(function(data){
 						if (data.length != query.length) {
-							senderr('db_err');
+							senderr('data_err');
 						} else {
 							var girl = new Girl(table);
 							girl.Lv = data[0];
@@ -996,7 +1003,7 @@ wss.on('connection', function(ws) {
 				var trans = new Transaction(db, uid);
 				db.hmget('role:'+uid, query, check2(function(data){
 					if (data.length < query.length) {
-						senderr('db_err');
+						senderr('data_err');
 					} else {
 						var role = new Role(table);
 						role.Lv = data[0];
