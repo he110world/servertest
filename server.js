@@ -106,19 +106,22 @@ Teammate.prototype.addGirl = function (girlData) {
 
 sub.psubscribe('recruit.*');
 sub.on('pmessage', function(pattern, channel, message){
+	console.log(pattern,channel,message);
 	if (pattern == 'recruit.*') {
 		var cmd = channel.split('.')[1];
 		switch (cmd) {
 			case 'rooms':
 				//[roomid,roomid,...]
+				console.log(message);
 				if (message.length > 0) {
 					var roomids = message.split(',');
 
 					// find room members on this server
 					roomids.forEach(function(roomid, i){
-						db.lrange('room.'+roomid, 0, -1, function(err, uids){
-							for (var i=0; i<uids.length; i++) {
-								wss.sendcmd(uids[i], 'roomdirty');
+						db.lrange('room:'+roomid, 0, -1, function(err, uids){
+							console.log(uids);
+							for (var j=0; j<uids.length; j++) {
+								wss.sendcmd(uids[j], 'roomdirty');
 							}
 						});
 					});
@@ -590,7 +593,7 @@ wss.on('connection', function(ws) {
 //				.expire('roomid:'+uid, 1800)	//TODO: real expire time
 //				.expire('room:'+newid, 1800)
 				.exec(checklist(2,function(data){
-					sendobj({room:{roomid:newid, users:[uid]}});
+					sendobj({room:{roomid:newid, userid:[uid]}});
 				}));
 			}));
 		}
@@ -604,7 +607,7 @@ wss.on('connection', function(ws) {
 						.del('roomid:'+uid)
 						.exec(checklist(2,function(){
 							if (typeof cb == 'function') {
-								cb();
+								cb(uid);
 							}
 						}));
 					} else { // tell others that I left the room
@@ -613,7 +616,7 @@ wss.on('connection', function(ws) {
 						.lrem('room:'+roomid, 1, uid)
 						.exec(checklist(2,function(){
 							if (typeof cb == 'function') {
-								cb();
+								cb(uid);
 							}
 						}));
 					}
@@ -1800,7 +1803,7 @@ wss.on('connection', function(ws) {
 						db.get('roomid:'+id, check(function(roomid){
 							if (roomid) {
 								db.lrange('room:'+roomid, 0, -1, check(function(room){
-									sendobj({room:{roomid:roomid, users:room}});
+									sendobj({room:{roomid:roomid, userid:room}});
 								}));
 							} else {
 								sendobj({room:null});
@@ -1828,7 +1831,7 @@ wss.on('connection', function(ws) {
 								function finish () {
 									++cnt;
 									if (cnt == uids.length) {
-										sendobj(mates);
+										sendobj({roommate:mates});
 									}
 								}
 

@@ -13,17 +13,20 @@ sub.on('pmessage', function(pattern, channel, msg){
 		case 'roomcmd.recruit':	// room wants to recruit
 			// add/change recruit info
 			// [roomid, lvmin, lvmax, mapid]
+			console.log('recruit');
 			db.rpush('recruit_write', msg);	
 			break;
 		case 'roomcmd.search':	// player wants to search
 			// add/change search info
 			// [uid, lv, mapid]
+			console.log('search');
 			db.rpush('search_write', msg);
 			break;
 		case 'roomcmd.join':	// player wants to join a room
 			// add/change join info
 			// [uid, roomid, mapid]
 			// possible err: wrong mapid
+			console.log('join');
 			db.rpush('join_write', msg);
 			break;
 	}
@@ -59,17 +62,25 @@ RecruitInfo.prototype.welcomeSearch = function (search) {
 		&& this.uids.indexOf(search.uid)==-1;
 }
 
+RecruitInfo.prototype.has = function (search) {
+	return this.uids.indexOf(search.uid) != -1;
+}
+
 RecruitInfo.prototype.accept = function (search) {
 	this.uids.push(search.uid);
 	this.len = this.uids.length;
 
+	console.log('begin accept');
 	beginOp();
 	// db ops
 	// add uid to room:<roomid>
-	db.rpush('room:'+this.roomid, search.uid, function(){
-		resultMsg[this.roomid] = true;
-		setRoomOps.push('roomid:'+search.uid, this.roomid);
+	var roomid = this.roomid;
+	resultMsg[roomid] = true;
+	setRoomOps.push('roomid:'+search.uid, roomid);
+
+	db.rpush('room:'+roomid, search.uid, function(){
 		endOp();
+		console.log('end accept', resultMsg, setRoomOps);
 	});
 }
 
@@ -101,41 +112,65 @@ function doPublish () {
 		rooms.push(roomid);
 	}
 	if (rooms.length > 0) {
-		pub.publish('recruit.rooms', rooms);
+		console.log('pub',rooms);
+		pub.publish('recruit.rooms', rooms, function(err,data){
+			console.log(err,data);
+		});
 	}
 	if (errMsg.length > 0) {
 		pub.publish('recruit.err', errMsg);
 	}
-	console.log('====================');
 }
 
 function recruit () {
 	if (totalOps > 0) {
-		console.log(totalOps);
+		console.log(totalOps, 'unfinished ops');
 		return;
 	}
 
+	console.log('---------');
 	resultMsg = {};
 	errMsg = [];
 	setRoomOps = [];
 
-	console.log('------------------------');
-
 	beginOp();
 
 	// swap read & write queue
-	db.multi()
-	.rename('recruit_write', 'recruit_read')
-	.rename('search_write', 'search_read')
-	.rename('join_write', 'join_read')
-	.exec(function(err,data){
-		db.lrange('search_read', 0, -1, function(err, searchlist){	// get search list
-			console.log(searchlist);
-			db.lrange('join_read', 0, -1, function(err, joinlist){	// get join list
-				if (searchlist.length == 0 && joinlist.length == 0) {	// nobody will enter any room
+	db.llen('recruit_write', function(err,recruit_len){
+		db.llen('search_write', function(err,search_len){
+			db.llen('join_write',function(err,join_len){
+				var only_recruit = recruit_len>0 && search_len==0 && join_len==0;
+				var only_search = recruit_len==0 && search_len>0 && join_len==0;
+				var nothing = recruit_len==0 && search_len==0 && join_len==0;
+				if (nothing || only_recruit || only_search) {
+					console.log('early out');
 					endOp();
 					return;
 				}
+
+				var multi = db.multi();
+				if (recruit_len>0) {
+					multi.rename('recruit_write', 'recruit_read');
+				} else {
+					multi.del('recruit_read');
+				}
+				if (search_len>0) {
+					multi.rename('search_write', 'search_read');
+				} else {
+					multi.del('search_read');
+				}
+				if (join_len>0) {
+					multi.rename('join_write', 'join_read');
+				} else {
+					multi.del('join_read');
+				}
+				multi.exec(doRecruit);
+			});
+		});
+	});
+	function doRecruit(err,data){
+		db.lrange('search_read', 0, -1, function(err, searchlist){	// get search list
+			db.lrange('join_read', 0, -1, function(err, joinlist){	// get join list
 				db.lrange('recruit_read', 0, -1, function(err, recruitlist){	// get recruit list
 					var recruitinfo_forjoin = {};	// roomid -> {lvmin, lvmax, mapid, len}
 					var recruitinfo = [];
@@ -167,6 +202,18 @@ function recruit () {
 						joininfo.push(join);
 					}
 
+					if (recruitinfo.length==0 && joininfo.length==0) {
+						console.log('early out 2: no recruit or join');
+
+						// all search failed
+						if (searchlist.length > 0) {
+							db.rpush.apply(db, ['search_write'].concat(searchlist).concat([function(){
+								endOp();
+							}]));
+						}
+						return;
+					}
+
 					// get room sizes
 					var roomcnt = 0;
 					var qrycnt = 0;
@@ -179,13 +226,13 @@ function recruit () {
 								if (qrycnt != roomcnt) {	
 									return;
 								}
+
 								// qrycnt == roomcnt, we have all lengths, yay!
 
 								// update length info
 								for (var i=0; i<recruitinfo.length; i++) {
 									var rec = recruitinfo[i];
 									rec.uids = roomuids[rec.roomid];
-									console.log(roomuids);
 									rec.len = rec.uids ? rec.uids.length : 0;
 									var valid = true;
 									if (rec.len < 4) {
@@ -252,6 +299,9 @@ function recruit () {
 												delete validrecruit[validrecruit.indexOf(rec)];
 												break;
 											}
+										} else if (rec.has(search)){	// already recruited
+											failed = false;
+											break;
 										}
 									}
 
@@ -280,6 +330,7 @@ function recruit () {
 								// write back failed items
 
 								// failed recruit
+								console.log('recruitlist',recruitlist_write);
 								if (recruitlist_write.length > 0) {
 									beginOp();
 									db.rpush.apply(db, ['recruit_write'].concat(recruitlist_write).concat([function(){
@@ -288,7 +339,7 @@ function recruit () {
 								}
 
 								// failed search
-								console.log(failedsearch);
+								console.log('failedsearch',failedsearch);
 								if (failedsearch.length > 0) {
 									beginOp();
 									db.rpush.apply(db, ['search_write'].concat(failedsearch).concat([function(){
@@ -296,6 +347,7 @@ function recruit () {
 									}]));
 								}
 
+								console.log('setroomops',setRoomOps);
 								if (setRoomOps.length > 0) {
 									beginOp();
 									db.mset(setRoomOps, function(err){
@@ -310,7 +362,7 @@ function recruit () {
 				});
 			});
 		});
-	});
+	}
 }
 
 setInterval(recruit, 1000);
