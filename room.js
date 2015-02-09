@@ -317,11 +317,11 @@ function recruit () {
 									if (cnt && (uids.indexOf(join.uid) != -1 || cnt >= 4)) {	// room full
 										errMsg.push(join.uid);
 									} else {
-										uids.push(join.uid);
 										beginOp();
-										db.set('roomid:'+join.uid, join.roomid, function(){
-											resultMsg[join.roomid] = true;
-											setRoomOps.push('roomid:'+join.uid, join.roomid);
+										uids.push(join.uid);
+										resultMsg[join.roomid] = true;
+										setRoomOps.push('roomid:'+join.uid, join.roomid);
+										db.rpush('room:'+roomid, join.uid, function(){
 											endOp();
 										});
 									}

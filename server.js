@@ -600,24 +600,28 @@ wss.on('connection', function(ws) {
 
 		function quitroom (uid, cb) {
 			db.get('roomid:'+uid, check2(function(roomid){
-				db.llen('room:'+roomid, check(function(len){
-					if (len<2) { // destroy the room if it's empty
+				db.lrange('room:'+roomid, 0, -1, check(function(room){
+					// not in this room
+					if (room.indexOf(uid) == -1) {
+						db.del('roomid:'+uid, check(function(){
+							cb(uid);
+						}));
+						return;
+					}
+
+					if (room.length<=1) { // destroy the room if it's empty
 						db.multi()
 						.del('room:'+roomid)
 						.del('roomid:'+uid)
 						.exec(checklist(2,function(){
-							if (typeof cb == 'function') {
-								cb(uid);
-							}
+							cb(uid);
 						}));
 					} else { // tell others that I left the room
 						db.multi()
 						.del('roomid:'+uid)
 						.lrem('room:'+roomid, 1, uid)
 						.exec(checklist(2,function(){
-							if (typeof cb == 'function') {
-								cb(uid);
-							}
+							cb(uid);
 						}));
 					}
 				}));
