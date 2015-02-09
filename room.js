@@ -1,36 +1,12 @@
 var redis = require('redis');
 var db = redis.createClient();
 var pub = redis.createClient();
-var sub = redis.createClient();
 var resultMsg = {};	// avoid duplicate rooms
 var errMsg = [];
+var timeoutsearch = [];
 var setRoomOps = [];
 var totalOps = 0;
-
-sub.psubscribe('roomcmd.*');
-sub.on('pmessage', function(pattern, channel, msg){
-	switch (channel) {
-		case 'roomcmd.recruit':	// room wants to recruit
-			// add/change recruit info
-			// [roomid, lvmin, lvmax, mapid]
-			console.log('recruit');
-			db.rpush('recruit_write', msg);	
-			break;
-		case 'roomcmd.search':	// player wants to search
-			// add/change search info
-			// [uid, lv, mapid]
-			console.log('search');
-			db.rpush('search_write', msg);
-			break;
-		case 'roomcmd.join':	// player wants to join a room
-			// add/change join info
-			// [uid, roomid, mapid]
-			// possible err: wrong mapid
-			console.log('join');
-			db.rpush('join_write', msg);
-			break;
-	}
-});
+var SEARCH_TIMEOUT = 5000;
 
 function beginOp () {
 	++totalOps;
@@ -103,6 +79,7 @@ function SearchInfo (datastr) {
 	this.uid = data[0];
 	this.lv = data[1];
 	this.mapid = data[2];
+	this.time = data[3];
 }
 
 // set all roomid:uid to <roomid>
@@ -120,6 +97,9 @@ function doPublish () {
 	if (errMsg.length > 0) {
 		pub.publish('recruit.err', errMsg);
 	}
+	if (timeoutsearch.length > 0) {
+		pub.publish('recruit.timeout', timeoutsearch);
+	}
 }
 
 function recruit () {
@@ -132,6 +112,7 @@ function recruit () {
 	resultMsg = {};
 	errMsg = [];
 	setRoomOps = [];
+	timeoutsearch = [];
 
 	beginOp();
 
@@ -140,11 +121,24 @@ function recruit () {
 		db.llen('search_write', function(err,search_len){
 			db.llen('join_write',function(err,join_len){
 				var only_recruit = recruit_len>0 && search_len==0 && join_len==0;
-				var only_search = recruit_len==0 && search_len>0 && join_len==0;
+//				var only_search = recruit_len==0 && search_len>0 && join_len==0;
 				var nothing = recruit_len==0 && search_len==0 && join_len==0;
-				if (nothing || only_recruit || only_search) {
+				if (nothing || only_recruit) {
 					console.log('early out');
-					endOp();
+
+					// search timeout
+/*					if (only_search) {
+						db.lrange('search_write', function(err,searchlist){
+							for (var i=0; i<searchlist.length; i++) {
+								var search = new SearchInfo(searchlist[i]);
+								if (Date.now() - search.time > SEARCH_TIMEOUT) {
+								}
+							}
+						});
+					} else {
+					*/
+						endOp();
+					//}
 					return;
 				}
 
@@ -188,10 +182,12 @@ function recruit () {
 					for (var i=0; i<recruitlist.length; i++) {
 						// [roomid, lvmin, lvmax, mapid]
 						var rec = new RecruitInfo(recruitlist[i]);
+						rec.data = recruitlist[i];
 						if (!roomuids.hasOwnProperty(rec.roomid)) {	// skip identical recruits
-							roomuids[rec.roomid] = 0;
+							roomuids[rec.roomid] = recruitinfo.length;
 							recruitinfo.push(rec);
-							rec.data = recruitlist[i];
+						} else {	// replace old recruit for this roomid
+							recruitinfo[roomuids[rec.roomid]] = rec;
 						}
 					}
 
@@ -207,9 +203,25 @@ function recruit () {
 
 						// all search failed
 						if (searchlist.length > 0) {
-							db.rpush.apply(db, ['search_write'].concat(searchlist).concat([function(){
+
+							// search timeout
+							var validsearch = [];
+							var now = Date.now();
+							for (var i=0; i<searchlist.length; i++) {
+								var search = new SearchInfo(searchlist[i]);
+								if (now - search.time < SEARCH_TIMEOUT) {
+									validsearch.push(searchlist[i]);
+								} else {
+									timeoutsearch.push(search.uid);
+								}
+							}
+							if (validsearch.length > 0) {
+								db.rpush.apply(db, ['search_write'].concat(searchlist).concat([function(){
+									endOp();
+								}]));
+							} else {
 								endOp();
-							}]));
+							}
 						}
 						return;
 					}
@@ -279,8 +291,14 @@ function recruit () {
 
 								var failedsearch = [];
 								for (var i=0; i<searchlist.length; i++) {
-									// [uid, lv, mapid]
+									// [uid, lv, mapid, unixtime]
 									var search = new SearchInfo(searchlist[i]);
+
+									// search timeout
+									if (Date.now() - search.time > SEARCH_TIMEOUT) {
+										timeoutsearch.push(search.uid);
+										continue;
+									}
 
 									// skip duplicated searches
 									if (searched[search.uid]) {

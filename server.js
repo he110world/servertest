@@ -132,7 +132,16 @@ sub.on('pmessage', function(pattern, channel, message){
 				if (message.length > 0) {
 					var uids = message.split(',');
 					for (var i=0; i<uids.length; i++) {
-						wss.sendcmd(uids[i], 'joinerr');
+						wss.sendcmd(uids[i], 'joinfail');
+					}
+				}
+				break;
+			case 'timeout':
+				//[uid,uid,...]
+				if (message.length > 0) {
+					var uids = message.split(',');
+					for (var i=0; i<uids.length; i++) {
+						wss.sendcmd(uids[i], 'searchfail');
 					}
 				}
 				break;
@@ -758,9 +767,11 @@ wss.on('connection', function(ws) {
 			}
 
 			getuser(function(user,uid){
-				var data = [roomid, lvmin, lvmax, mapid];
-				pub.publish('roomcmd.recruit', data.toString());
-				sendnil();
+				var recruitstr = [roomid, lvmin, lvmax, mapid].toString();
+				db.rpush('recruit_write', recruitstr);
+				db.set('recruitinfo:'+roomid, recruitstr, check(function(){
+					sendobj({role:{Recruit:recruitstr}});
+				}));
 			});
 			break;
 		case 'makeroom':
@@ -802,13 +813,24 @@ wss.on('connection', function(ws) {
 
 			getuser(function(user,uid){
 				var pubstr = [uid,roomid,mapid].toString();
+
+				function doJoin () {
+					db.llen('room:'+roomid, check(function(len){
+						if (len > 0) {	
+							db.rpush('join_write', pubstr);
+						} else {	// join a nonexist room
+							wss.sendcmd(uid, 'joinfail');
+						}
+					}));
+				}
+
 				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
 						quitroom(uid, function(){
-							pub.publish('roomcmd.join', pubstr);
+							doJoin();
 						});
 					} else {
-						pub.publish('roomcmd.join', pubstr);
+						doJoin();
 					}	
 				}));
 
@@ -863,7 +885,8 @@ wss.on('connection', function(ws) {
 			getuser(function(user,uid){
 				function doSearch () {
 					db.hget('role:'+uid, 'Lv', check(function(lv){
-						pub.publish('roomcmd.search', [uid, lv, mapid].toString());
+						var searchstr = [uid, lv, mapid, Date.now()].toString();
+						db.rpush('search_write', searchstr);
 						sendnil();
 					}));
 				}
@@ -1814,7 +1837,9 @@ wss.on('connection', function(ws) {
 						db.get('roomid:'+id, check(function(roomid){
 							if (roomid) {
 								db.lrange('room:'+roomid, 0, -1, check(function(room){
-									sendobj({room:{roomid:roomid, userid:room}});
+									db.get('recruitinfo:'+roomid, check(function(recruitstr){
+										sendobj({room:{roomid:roomid, userid:room}, role:{Recruit:recruitstr}});
+									}));
 								}));
 							} else {
 								sendobj({room:null});
