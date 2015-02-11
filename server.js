@@ -1109,8 +1109,8 @@ wss.on('connection', function(ws) {
 					db.multi()
 					.srem('friends:'+uid, target)
 					.srem('friends:'+target, uid)
-					.srem('follow:'+uid, target)
-					.srem('follow:'+target, uid)
+					.srem('follows:'+uid, target)
+					.srem('follows:'+target, uid)
 					.exec(checklist(4,function(){
 						var userdata = {};
 						userdata.friends = {};
@@ -1196,16 +1196,16 @@ wss.on('connection', function(ws) {
 				}
 
 				var obj = {};
-				obj.follow = {};
+				obj.follows = {};
 
 				if (follow > 0) {
-					db.sadd('follow:'+uid, target, check(function(){
-						obj.follow[target] = 1;
+					db.sadd('follows:'+uid, target, check(function(){
+						obj.follows[target] = 1;
 						sendobj(obj);
 					}));
 				} else {
-					db.srem('follow:'+uid, target, check(function(){
-						obj.follow[target] = null;
+					db.srem('follows:'+uid, target, check(function(){
+						obj.follows[target] = null;
 						sendobj(obj);
 					}));
 				}
@@ -1916,7 +1916,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
+			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
@@ -2009,6 +2009,7 @@ wss.on('connection', function(ws) {
 						break;
 					case 'friends':
 					case 'pendingfriends':
+					case 'follows':
 						db.smembers(viewname+':'+uid, check(function(friendset){
 							var userdata = {};
 							userdata[viewname] = friendset; //friends;
