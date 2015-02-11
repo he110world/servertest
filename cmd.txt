@@ -20,6 +20,7 @@ ADD_Equip,{"cmd":"ADD_Equip";"data":{"id":{0}};"session":{1}},生成随机装备
 ADD_GirlExp,{"cmd":"ADD_GirlExp";"data":{"id":{0};"count":{1}};"session":{2}},加战姬经验
 ADD_RoleExp,{"cmd":"ADD_RoleExp";"data":{"count":{0}};"session":{1}},加角色经验
 ADD_Item,{"cmd":"ADD_Item";"data":{"id":{0};"count":{1}};"session":{2}},加物品
+queryfriend,{"cmd":"queryfriend";"data":{"target":{0}};"session":{1}},加好友之前查看用户信息(target为用户ID，不存在的话返回db_err)
 requestfriend,{"cmd":"requestfriend";"data":{"target":{0}};"session":{1}},求加好友（target为用户ID）
 delfriend,{"cmd":"delfriend";"data":{"target":{0}};"session":{1}},删除好友(target为用户ID)
 acceptfriend,{"cmd":"acceptfriend";"data":{"target":{0}};"session":{1}},接受好友请求

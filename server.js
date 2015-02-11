@@ -59,6 +59,19 @@ function responseErr (ws, cmd, err, id) {
 	ws.send(JSON.stringify(resp));
 }
 
+function responseTemp (ws, cmd, tmp, id) {
+	if (ws.readyState != ws.OPEN) {
+		return;
+	}
+	var resp = {};
+	resp.cmd = cmd;
+	resp.tmp = tmp;
+	if (id) {
+		resp.id = id;
+	}
+	ws.send(JSON.stringify(resp));
+}
+
 function publishData (pub, channel, data) {
 	pub.publish(channel, JSON.stringify(data));
 }
@@ -363,6 +376,10 @@ wss.on('connection', function(ws) {
 
 		function sendobj (data) {
 			response(ws, msg.cmd, data, msg.id);
+		}
+
+		function sendtemp (data) {
+			responseTemp(ws, msg.cmd, data, msg.id);
 		}
 
 		function sendnil () {
@@ -1064,6 +1081,26 @@ wss.on('connection', function(ws) {
 				} catch (e) {
 					senderr('data_err:id,count');
 				}
+			});
+			break;
+		case 'queryfriend':
+			//@cmd queryfriend
+			//@data target
+			//@desc 加好友之前查看用户信息(target为用户ID，不存在的话返回db_err)
+			getuser(function(user, uid){
+				try {
+					var target = msg.data.target;
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
+				db.exists('role:'+target, check2(function(){
+					db.hmget('role:'+target, ['nickname', 'Lv'], checklist(2, function(data){
+						var obj = {Nick:data[0], Lv:data[1]};
+						sendtemp(obj);
+					}));
+				}));
 			});
 			break;
 		case 'requestfriend':
