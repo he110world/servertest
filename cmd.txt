@@ -20,10 +20,13 @@ ADD_Equip,{"cmd":"ADD_Equip";"data":{"id":{0}};"session":{1}},生成随机装备
 ADD_GirlExp,{"cmd":"ADD_GirlExp";"data":{"id":{0};"count":{1}};"session":{2}},加战姬经验
 ADD_RoleExp,{"cmd":"ADD_RoleExp";"data":{"count":{0}};"session":{1}},加角色经验
 ADD_Item,{"cmd":"ADD_Item";"data":{"id":{0};"count":{1}};"session":{2}},加物品
-requestfriend,{"cmd":"requestfriend";"data":{"target":{0}};"session":{1}},求加好友（target暂时为好友用户名）
-delfriend,{"cmd":"delfriend";"data":{"target":{0}};"session":{1}},删除好友
+requestfriend,{"cmd":"requestfriend";"data":{"target":{0}};"session":{1}},求加好友（target为用户ID）
+delfriend,{"cmd":"delfriend";"data":{"target":{0}};"session":{1}},删除好友(target为用户ID)
 acceptfriend,{"cmd":"acceptfriend";"data":{"target":{0}};"session":{1}},接受好友请求
 declinefriend,{"cmd":"declinefriend";"data":{"target":{0}};"session":{1}},拒绝好友请求
+followfriend,{"cmd":"followfriend";"data":{"target ":{0};"follow":{1}};"session":{2}},关注好友（follow=1：关注，follow=0：取消关注）
+friendbrief,{"cmd":"friendbrief";"data":{"uids":{0}};"session":{1}},好友简要信息（参数：uid$uid$uid...  返回:用户名 等级 队长 最后时间）
+frienddetail,{"cmd":"frienddetail";"data":{"target":{0}};"session":{1}},好友详细信息
 usegift,{"cmd":"usegift";"data":{"index":{0}};"session":{1}},领取礼包
 useallgifts,{"cmd":"useallgifts";"session":{0}},领取全部礼包
 useitem,{"cmd":"useitem";"data":{"itemid":{0};"targetid":{1}};"session":{2}},使用物品(targetid可以是girl的id之类的值)
