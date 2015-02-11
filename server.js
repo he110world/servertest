@@ -2010,7 +2010,7 @@ wss.on('connection', function(ws) {
 					case 'friends':
 					case 'pendingfriends':
 					case 'follows':
-						db.smembers(viewname+':'+uid, check(function(friendset){
+						db.smembers(viewname+':'+id, check(function(friendset){
 							var userdata = {};
 							userdata[viewname] = friendset; //friends;
 							sendobj(userdata);
