@@ -955,7 +955,10 @@ wss.on('connection', function(ws) {
 					// name already exists?
 					// DON'T use SISMEMBER + SADD: ismember和add之间其他玩家可以进行操作
 					db.sadd('nicknames', newname, check2err('nick_exist_err',function(){
-						db.hset('role:'+uid, 'nickname', newname, check(function(res){
+						db.multi()
+						.set('nick:'+newname, uid)
+						.hset('role:'+uid, 'nickname', newname)
+						.exec(check(function(res){
 							sendobj({role:{nickname:newname}});
 						}));
 					}));
@@ -1098,6 +1101,29 @@ wss.on('connection', function(ws) {
 				db.exists('role:'+target, check2(function(){
 					db.hmget('role:'+target, ['nickname', 'Lv'], checklist(2, function(data){
 						var obj = {Nick:data[0], Lv:data[1]};
+						sendtemp(obj);
+					}));
+				}));
+			});
+			break;
+		case 'querynick':
+			//@cmd querynick
+			//@data nick
+			//@desc 加好友之前查看用户信息(nick为用户昵称，不存在的话返回db_err)
+			getuser(function(user, uid){
+				try {
+					var nick = msg.data.nick;
+					if (!nick) {
+						throw new Error();
+					}
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
+				db.get('nick:'+nick, check2(function(target){
+					db.hget('role:'+target, 'Lv', check(function(lv){
+						var obj = {ID:target, Nick:nick, Lv:lv};
 						sendtemp(obj);
 					}));
 				}));
