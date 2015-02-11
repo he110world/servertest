@@ -917,6 +917,7 @@ wss.on('connection', function(ws) {
 			//@desc 房间内聊天
 			getuser(function(user,uid){
 				db.get('roomid:'+uid, check2(function(roomid){
+					sendnil();
 					roommsg(roomid, 'chat', {ID:uid, msg:msg.data.msg});
 				}));
 			});
@@ -1068,13 +1069,17 @@ wss.on('connection', function(ws) {
 		case 'requestfriend':
 			//@cmd requestfriend
 			//@data target
-			//@desc 求加好友（target暂时为好友用户名）
+			//@desc 求加好友（target为用户ID）
 			//
 			// <user> -> pendingfriends:<target>
 			// tell target
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
+					if (target == uid) {	// try to be friend with oneself
+						senderr('data_err');
+						return;
+					}
 					db.sadd('pendingfriends:'+target, uid, check(function(){
 						sendnil();
 						var data = {};
@@ -1090,27 +1095,32 @@ wss.on('connection', function(ws) {
 		case 'delfriend':
 			//@cmd delfriend
 			//@data target
-			//@desc 删除好友
+			//@desc 删除好友(target为用户ID)
 			//
-			// friends:<user> -remove-> <target>
-			// friends:<target> -remove-> <user>
+			// friends:<uid> -remove-> <target>
+			// friends:<target> -remove-> <uid>
+			// follow:<uid> -remove-> <target>
+			// follow:<target> -remove-> <uid>
 			// tell self
 			// tell target
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.srem('friends:'+uid, target, check2(function(){
-						db.srem('friends:'+target, uid, check2(function(){
-							var userdata = {};
-							userdata.friends = {};
-							userdata.friends[target] = null;
-							sendobj(userdata);
+					db.multi()
+					.srem('friends:'+uid, target)
+					.srem('friends:'+target, uid)
+					.srem('follow:'+uid, target)
+					.srem('follow:'+target, uid)
+					.exec(checklist(4,function(){
+						var userdata = {};
+						userdata.friends = {};
+						userdata.friends[target] = null;
+						sendobj(userdata);
 
-							var targetdata = {};
-							targetdata.friends = {};
-							targetdata.friends[uid] = null;
-							notifymsg(target, {cmd:'view', data:targetdata});
-						}));
+						var targetdata = {};
+						targetdata.friends = {};
+						targetdata.friends[uid] = null;
+						notifymsg(target, {cmd:'view', data:targetdata});
 					}));
 				} catch (e) {
 					senderr('data_err:target');
@@ -1129,22 +1139,22 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.srem('pendingfriends:'+uid, target, check2(function(){
-						db.sadd('friends:'+uid, target, check(function(){
-							db.sadd('friends:'+target, uid, check(function(){
-								var userdata = {};
-								userdata.pendingfriends = {};
-								userdata.pendingfriends[target] = null;
-								userdata.friends = {};
-								userdata.friends[target] = 1;
-								sendobj(userdata);
+					db.multi()
+					.srem('pendingfriends:'+uid, target)
+					.sadd('friends:'+uid, target)
+					.sadd('friends:'+target, uid)
+					.exec(checklist(3,function(){
+						var userdata = {};
+						userdata.pendingfriends = {};
+						userdata.pendingfriends[target] = null;
+						userdata.friends = {};
+						userdata.friends[target] = 1;
+						sendobj(userdata);
 
-								var targetdata = {};
-								targetdata.friends = {};
-								targetdata.friends[uid] = 1;
-								notifymsg(target, {cmd:'view', data:targetdata});
-							}));
-						}));
+						var targetdata = {};
+						targetdata.friends = {};
+						targetdata.friends[uid] = 1;
+						notifymsg(target, {cmd:'view', data:targetdata});
 					}));
 				} catch (e) {
 					senderr('data_err:target');
@@ -1169,6 +1179,99 @@ wss.on('connection', function(ws) {
 				} catch (e) {
 					senderr('data_err,target');
 				}
+			});
+			break;
+		case 'followfriend':
+			//@cmd followfriend
+			//@data target 
+			//@data follow
+			//@desc 关注好友（follow=1：关注，follow=0：取消关注）
+			getuser(function(user, uid){
+				try {
+					var target = msg.data.target;
+					var follow = msg.data.follow;
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
+				var obj = {};
+				obj.follow = {};
+
+				if (follow > 0) {
+					db.sadd('follow:'+uid, target, check(function(){
+						obj.follow[target] = 1;
+						sendobj(obj);
+					}));
+				} else {
+					db.srem('follow:'+uid, target, check(function(){
+						obj.follow[target] = null;
+						sendobj(obj);
+					}));
+				}
+			});
+			break;
+		case 'friendbrief':
+			//@cmd friendbrief
+			//@data uids
+			//@desc 好友简要信息（参数：uid$uid$uid...  返回:用户名 等级 队长 最后时间）
+			getuser(function(user, uid){
+				try {
+					var uids = msg.data.uids.toString().split('$');
+				} catch (e) {
+					senderr('data_err:uids');
+					return;
+				}
+
+				var cnt = 0;
+				var obj = {friend:{}};
+				uids.forEach(function(fid, i){
+					db.hmget('role:'+fid, ['nickname', 'Lv', 'LastTime'], checklist(3, function(data){
+						db.lindex('team.1:'+fid, 0, check(function(girlid){
+							++cnt;
+							obj.friend[fid] = {ID:fid, Nick:data[0], Lv:data[1], LastTime:data[2], Girl:girlid};
+
+							if (cnt == uids.length) {	// done!
+								sendobj(obj);
+							}
+						}));
+					}));
+				});
+			});
+			break;
+		case 'frienddetail':
+			//@cmd frienddetail
+			//@data target
+			//@desc 好友详细信息
+			getuser(function(user, uid){
+				try {
+					var target = msg.data.target;
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+
+				// scoreboard / contribboard / girl
+				var friend = {};
+				var obj = {friend:{}};
+				obj.friend[target] = friend;
+				db.zrevrank('score', target, check(function(scorerank){
+					friend.ScoreRank = scorerank;
+					db.zrevrank('contrib', target, check(function(contribrank){
+						friend.ContribRank = contribrank;
+						db.lindex('team.1:'+target, 0, check(function(girlid){
+							if (girlid) {
+								db.hgetall('girl.'+girlid+':'+target, check(function(girl){
+									friend.girl = {};
+									friend.girl[girlid] = girl;
+									sendobj(obj);
+								}));
+							} else {
+								sendobj(obj);
+							}
+						}));
+					}));
+				}));
 			});
 			break;
 		case 'usegift':
