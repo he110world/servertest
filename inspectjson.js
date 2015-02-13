@@ -1,6 +1,8 @@
+var desc = {};
+
 // convert db's json description to csv
 if (process.argv.length < 3) {
-	console.log('Usage: node inspectjson.js jsonfile.json > result.csv');
+	console.log('Usage: node inspectjson.js jsonfile.json [oldresult.csv] > result.csv');
 	process.exit();
 }
 
@@ -12,6 +14,11 @@ function Row(key, data) {
 	this.type = data.type;
 	this.format = this.getFormat(key, data);
 	this.value = this.getValue(key, data);
+	if (desc[key]) {
+		this.desc = desc[key];
+	} else {
+		this.desc = '';
+	}
 }
 
 function isNumber(val) {
@@ -19,7 +26,7 @@ function isNumber(val) {
 }
 
 Row.prototype.print = function () {
-	console.log(this.key+','+this.type+','+this.format+','+this.value+',');
+	console.log(this.key+','+this.type+','+this.format+','+this.value+','+this.desc);
 }
 
 Row.prototype.getFormat = function (key, data) {
@@ -60,9 +67,9 @@ function getVal(val) {
 	if (val.indexOf(',') != -1) {	// array string
 		var vals = val.split(',');
 		if (isNumber(vals[0])) {
-			return '[id]';
+			return '[<id>]';
 		} else {
-			return '[name]';
+			return '[<name>]';
 		}
 	} else {
 		if (isNumber(val)) {
@@ -130,7 +137,48 @@ Row.prototype.getValue = function (key, data) {
 	return '<none>';
 }
 
-var json = require('./'+process.argv[2]);
+var fs = require('fs');
+function parseCsv(path) {
+	var rows = fs.readFileSync(path, 'utf8').split('\n');
+	var cols = rows[0].split(',');
+	var desc = {};
+
+	// extract key & desc
+	var keycol=-1, desccol=-1;
+	for (var i in cols) {
+		if (cols[i] == 'key') {
+			keycol = i;
+		} else if (cols[i].replace('\r', '') == 'desc') {
+			desccol = i;
+		}
+	}
+
+	if (keycol>=0 && desccol>=0) {
+		for (var i=1; i<rows.length; i++) {
+			var rowcols = rows[i].split(',');
+			var des = rowcols[desccol];
+			if (!!des) {
+				desc[rowcols[keycol]] = des;
+			}
+		}
+	}
+
+	return desc;
+}
+
+if (process.argv.length == 3) {
+	var json = require('./'+process.argv[2]);
+} else {
+	var jsonname = process.argv[2];
+	var csvname = process.argv[3];
+	if (jsonname.indexOf('.json') == -1) {	// first param is csv
+		var cname = jsonname;
+		jsonname = csvname;
+		csvname = cname;
+	}
+	var json = require('./'+jsonname);
+	desc = parseCsv('./'+csvname);
+}
 for (var key in json) {
 	var row = new Row(key, json[key]);
 	row.print();
