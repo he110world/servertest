@@ -271,6 +271,7 @@ wss.on('connection', function(ws) {
 					console.log('close');
 					delete uid2ws[uid];
 					db.del('session:'+uid, 'sessionuser:'+sess);
+					db.hset('role:'+uid, 'LastTime', Date.now())
 				});
 			}
 			delete ws2uid[ws];
@@ -944,23 +945,30 @@ wss.on('connection', function(ws) {
 			//@data nickname
 			//@desc 更改昵称
 			try {
-				var newname = msg.data.nickname;
+				var newnick = msg.data.nickname;
 			} catch (e) {
 				senderr('msg_err');
 			}
-			if (!newname) {
+			if (!newnick) {
 				senderr('nick_null_err');
 			} else {
 				getuser(function(user, uid) {
-					// name already exists?
-					// DON'T use SISMEMBER + SADD: ismember和add之间其他玩家可以进行操作
-					db.sadd('nicknames', newname, check2err('nick_exist_err',function(){
-						db.multi()
-						.set('nick:'+newname, uid)
-						.hset('role:'+uid, 'nickname', newname)
-						.exec(check(function(res){
-							sendobj({role:{nickname:newname}});
-						}));
+					db.hget('role:'+uid, 'nickname', check(function(oldnick){
+						if (newnick == oldnick) {
+							sendnil();
+						} else {
+							// remove old, add new
+							var multi = db.multi();
+							if (oldnick) {
+								multi.srem('nickuid:'+oldnick, uid)	// remove old
+							}
+							multi
+							.sadd('nickuid:'+newnick, uid)	// add new
+							.hset('role:'+uid, 'nickname', newnick)	// tell role
+							.exec(check(function(){
+								sendobj({role:{nickname:newnick}});
+							}));
+						}
 					}));
 				});
 			}
@@ -1121,11 +1129,8 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				db.get('nick:'+nick, check2(function(target){
-					db.hget('role:'+target, 'Lv', check(function(lv){
-						var obj = {ID:target, Nick:nick, Lv:lv};
-						sendtemp(obj);
-					}));
+				db.smembers('nickuid:'+nick, check(function(uids){
+					sendtemp(uids);
 				}));
 			});
 			break;
@@ -2180,17 +2185,11 @@ wss.on('connection', function(ws) {
 										db.multi()
 										.del('sessionuser:'+oldsession)
 										.set('sessionuser:'+session, user)
-										.exec(checklist(2,function(res){
+										.hset('role:'+uid, 'LastTime', Date.now())
+										.exec(checklist(3,function(res){
 											uid2ws[uid] = ws;
 											ws2uid[ws] = uid;
 											sendobj({session:session});
-
-											// in a room?
-											/*
-											db.get('roomid:'+uid, check(function(roomid){
-												addRoomUid(roomid, uid);
-											}));
-											*/
 										}));
 									}));
 								});	
