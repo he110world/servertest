@@ -27,10 +27,18 @@ db.keys('*', function(err,keys){
 		if (basekey.hasOwnProperty(base)) {
 			overwrite = false;
 			var oldparts = basekey[base].fullkey.split(/[.:]/);
-			if (idx>=0) {
-				var oldid = oldparts[idx];
-				if (id > oldid) {
+			if (idx>=0) {	// larger num overwrites smaller num
+				var oldid = parseInt(oldparts[idx]);
+				if (!isNaN(oldid) && id > oldid) {
 					overwrite = true;
+				}
+			} else {	// string overwrites numbers
+				// current is string
+				for (var j=0; j<oldparts.length; j++) {
+					if (!isNaN(oldparts[j])) {	// old is num
+						overwrite = true;
+						break;
+					}
 				}
 			}
 		}

@@ -299,7 +299,7 @@ wss.on('connection', function(ws) {
 					if (err || !user) {
 						responseErr(ws, msg.cmd, 'session_err', msg.id);
 					} else {
-						db.get('account:'+user+':id', function(err, uid){
+						db.get('accountid:'+user, function(err, uid){
 							if (err || !uid) {
 								responseErr(ws, msg.cmd, 'account_err', msg.id);
 							} else {
@@ -743,6 +743,24 @@ wss.on('connection', function(ws) {
 			//@desc 获取贡献值奖励
 			getboardgift('contrib', 30000);
 			break;
+		case 'get_ranks':
+			//@cmd get_ranks
+			//@desc 获取自己的积分和贡献度排名: ScoreRank 和 ContribRank
+			getuser(function(user, uid){
+				db.zrevrank('score', uid, check(function(scorerank){
+					db.zrevrank('contrib', uid, check(function(contribrank){
+						var obj = {};
+						if (scorerank) {
+							obj.ScoreRank = scorerank;
+						}
+						if (contribrank) {
+							obj.ContribRank = contribrank;
+						}
+						sendobj(obj);
+					}));
+				}));
+			});
+			break;
 		case 'setroomteam':
 			//@cmd setroomteam
 			//@data teamid
@@ -853,37 +871,6 @@ wss.on('connection', function(ws) {
 				}));
 
 				sendnil();
-
-			/*
-				db.exists('roomid:'+uid, check(function(exist){
-					if (exist) {
-						senderr('already_in_room_err');
-					} else {
-						try {
-							var roomid = msg.data.roomid;
-							var room = 'room:'+roomid;
-							db.exists(room, check2err('room_not_exist',function(data){
-								db.lpush(room, uid, check(function(count){
-									if (count > MAX_ROOM_SIZE) {	// room is full
-										db.ltrim(room, -MAX_ROOM_SIZE, -1);	// keep the first 4 users
-										senderr('room_full_err');
-									} else {
-										db.set('roomid:'+uid, roomid, check(function(res){
-											db.lrange(room, 0, -1, check(function(users){
-												addRoomUid(roomid, uid);
-												sendobj({room:{users:users}});
-												roommsg(roomid, 'join', {uid:uid});
-											}));
-										}));
-									}
-								}));
-							}));
-						} catch (e) {
-							senderr('msg_err');
-						}
-					}
-				}));
-				*/
 			});
 			break;
 		case 'searchroom':
@@ -2126,7 +2113,7 @@ wss.on('connection', function(ws) {
 					.set('user:'+user, pass)
 					.exec(checklist(2,function(res){
 						var uid = res[0];
-						db.set('account:'+user+':id', uid, check2(function(){
+						db.set('accountid:'+user, uid, check2(function(){
 							// create role
 							var newRole = new Role();
 							newRole.newRole(uid);
@@ -2157,7 +2144,7 @@ wss.on('connection', function(ws) {
 				if (pass != storedpass) {
 					senderr('pass_err');
 				} else {
-					db.get('account:'+user+':id', check2(function(uid){
+					db.get('accountid:'+user, check2(function(uid){
 
 						// session exist - multiple logins
 						db.get('session:'+uid, check(function(oldsess){

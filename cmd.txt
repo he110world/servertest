@@ -8,6 +8,7 @@ get_scoreboard,{"cmd":"get_scoreboard";"session":{0}},获取得分排行榜
 get_contribboard,{"cmd":"get_contribboard";"session":{0}},获取贡献度排行榜
 get_score_gift,{"cmd":"get_score_gift";"session":{0}},获取积分奖励
 get_contrib_gift,{"cmd":"get_contrib_gift";"session":{0}},获取贡献值奖励
+get_ranks,{"cmd":"get_ranks";"session":{0}},获取自己的积分和贡献度排名: ScoreRank 和 ContribRank
 setroomteam,{"cmd":"setroomteam";"data":{"teamid":{0}};"session":{1}},选择多人模式出击战姬
 webrecruit,{"cmd":"webrecruit";"data":{"roomid":{0};"lvmin":{1};"lvmax":{2};"mapid":{3}};"session":{4}},组队募集
 makeroom,{"cmd":"makeroom";"data":{"mapid":{0}};"session":{1}},开房间
