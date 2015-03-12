@@ -28,7 +28,6 @@ for (var i in obj) {
 	}
 
 	if (sheet.name == 'exp') {	// exp table is different
-//		continue;
 		// exp structure:
 		// exp : {
 		//		Lv : [...]
