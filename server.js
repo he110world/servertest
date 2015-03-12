@@ -25,6 +25,9 @@ var Equip = require('./equip');
 var Gift = require('./gift');
 var GIRL_PRICE = 100;
 
+// kpi
+var kpi = require('./kpilog');
+
 console.log("Server started");
 var port = parseInt(process.argv[2]);
 var WebSocketServer = require('ws').Server;
@@ -32,6 +35,52 @@ var wss = new WebSocketServer({port: port});
 var uid2ws = {};	// uid->ws
 var ws2uid = {};
 var appid = randomString(32);
+var defaultStates = {dev:0, ver:"1.0", map:0, map2:0, lv:1, payday:0, payall:0};
+
+function setstate (uid, states, cb) {
+	db.hmset('state:'+uid, states, function(err){
+		if (err) {
+			console.log(err);
+		}
+		cb();
+	});
+}
+
+function incrstate (uid, field, incr, cb) {
+	db.hincrby('state:'+uid, field, incr, function(err){
+		if (err) {
+			console.log(err);
+		}
+		cb();
+	});
+}
+
+function logstate (uid, data) {
+	// get states for every log
+	//
+	// device type : 1 - iOS, 2 - Android
+	// app ver. : string
+	// role level : role.Lv
+	// map level : maplv & mmaplv
+	// daily vip : dailyvip
+	// vip : vip
+	//
+	// hash: state:<uid> { dev: <int>, ver: <string>, map: <int>, map2: <int>, lv:<int>, pay:<int> }
+	db.hgetall('state:'+uid, function(err, states) {
+		if (err) {
+			console.log(err);
+		} else {
+			states = states || {};
+			states[uid] = uid;
+			for (var k in defaultStates) {
+				states[k] = states[k] || defaultStates[k];
+			}
+			for (var k in data) {
+				states[k] = data[k];
+			}
+		}
+	});
+}
 
 function response (ws, cmd, data, id) {
 	if (ws.readyState != ws.OPEN) {
@@ -268,13 +317,15 @@ wss.on('connection', function(ws) {
 				console.log('kick ' + uid);
 			} else {
 				db.get('session:'+uid, function(err,sess) {
-					console.log('close');
+					console.log('close: ' + uid);
 					delete uid2ws[uid];
 					db.del('session:'+uid, 'sessionuser:'+sess);
 					db.hset('role:'+uid, 'LastTime', Date.now())
 				});
 			}
 			delete ws2uid[ws];
+		} else {
+			console.log('invalid close: ' +  uid);
 		}
 	});
 
@@ -1051,6 +1102,10 @@ wss.on('connection', function(ws) {
 							var mod = role.addExp(expinc);
 							trans.hmset('role', mod, check(function(){
 								sendobj(trans.obj);
+
+								if (mod.Lv) {
+									kpi.levelUp(uid, mod.Lv);
+								}
 							}));
 						} catch (e) {
 							senderr('role_err');
@@ -2119,6 +2174,7 @@ wss.on('connection', function(ws) {
 							newRole.newRole(uid);
 							db.hmset('role:'+uid, newRole, check(function(){
 								sendnil();
+								logstate(uid, {reg:1});
 							}));
 						}));
 					}));
@@ -2177,6 +2233,7 @@ wss.on('connection', function(ws) {
 											uid2ws[uid] = ws;
 											ws2uid[ws] = uid;
 											sendobj({session:session});
+											logstate(uid, {login:1});
 										}));
 									}));
 								});	
@@ -2215,6 +2272,8 @@ wss.sendcmd = function (uid, cmd) {
 	var ws = uid2ws[uid];
 	if (ws) {
 		ws.send(JSON.stringify({cmd:cmd}));
+	} else {
+		console.log('invalid send: ' + uid);
 	}
 }
 

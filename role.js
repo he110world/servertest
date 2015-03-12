@@ -32,24 +32,6 @@ Role.prototype.addExp = function (expInc) {
 	var Lv = Math.floor(this.Lv);
 	var newExp = Math.floor(this.RoleExp) + Math.floor(expInc);
 	var ret = Util.updateLevel(newExp, Lv, 999, this.table.exp.RoleExp, 1);
-
-	/*
-	while (Lv<=999) {
-		var lvUpExp = Math.floor(this.table.exp.RoleExp[Lv+1]);
-		if (newExp >= lvUpExp) {
-			if (Lv == 999) {
-				newExp = lvUpExp;
-				break;
-			} else {
-				++Lv;
-				newExp -= lvUpExp;
-			}
-		} else {
-			break;
-		}
-	}
-	*/
-
 	Lv = ret[0];
 	newExp = ret[1];
 	if (Lv != this.Lv) {

@@ -26,7 +26,7 @@ var MsgType = {
 var endpoints = {};
 server.on('message', function (msg, remote) {
 	var type = msg[0];
-	console.log(type);
+	//console.log(type);
 	if (type == MsgType.REG) {
 		var uid = msg.readInt32LE(2);
 		endpoints[uid] = remote;
@@ -37,7 +37,7 @@ server.on('message', function (msg, remote) {
 	} else if (type == MsgType.QRY) {
 		var uid = msg.readInt32LE(6);
 		var ep = endpoints[uid];
-		console.log(uid,ep);
+		//console.log(uid,ep);
 		if (ep) {
 			var buf1 = new Buffer(2);
 			var buf2 = new Buffer(ep.address + ':' + ep.port);
@@ -49,7 +49,7 @@ server.on('message', function (msg, remote) {
 		var uid = msg.readInt32LE(6);
 		var ep = endpoints[uid];
 		if (ep) {
-			console.log('relay',msg);
+			//console.log('relay',msg);
 			server.send(msg, 0, msg.length, ep.port, ep.address);
 		}
 	}
