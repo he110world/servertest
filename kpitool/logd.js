@@ -10,7 +10,7 @@
    game log is sent by UDP: if server is down, don't bother reconnect
 
 ### Data Ops:
-     set/incr (decr=-incr)
+     set/incr/addToSet (decr=-incr)
 
 ### Incoming Messages:
 	 [<op type>, <collection>, <query>, <field>, <val>]*
@@ -73,6 +73,8 @@ mongo.connect(mongourl + '/kpi', function(err, db) {
 					updobj.$inc = updop;
 				} else if (op == 's') {
 					updobj.$set = updop;
+				} else if (op == 'a') {
+					updobj.$addToSet = updop;
 				} else {
 					throw new Error();
 				}

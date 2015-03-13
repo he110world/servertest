@@ -9,6 +9,7 @@
 var vip = require('./vip');
 var moment = require('moment');
 var mongo = require('mongodb').MongoClient;
+var ObjectID = require('mongodb').ObjectID;
 var mongourl = process.argv[2];
 if (!mongourl) {
 	mongourl = 'mongodb://localhost:27017';
@@ -16,8 +17,10 @@ if (!mongourl) {
 
 var db, arch;
 var yesterday = moment().subtract(1, 'days').format('YYYY-MM-DD');
+var yesterdayDate = moment(yesterday);
 var beforeyesterday = moment().subtract(2, 'days').format('YYYY-MM-DD');
 var _31daysago = moment().subtract(31, 'days').format('YYYY-MM-DD');
+var _60daysago = moment().subtract(60, 'days').format('YYYY-MM-DD');
 var yesterdayUsers = {};
 var yesterdayUids = [];
 
@@ -33,7 +36,7 @@ function calcDailyVIP () {
 		++cnt[v];
 	}
 
-	arch.update({name:'dvip'}, cnt, {upsert:true}, function(err,result){
+	arch.update({name:'dvip'}, {cnt:cnt}, {upsert:true}, function(err,result){
 		if (err) {
 			console.log(err);
 		}
@@ -59,7 +62,11 @@ function calcVIP () {
 			++cnt[v];
 		}
 
-		arch.update({name:'vip'}, cnt, {upsert:true});
+		arch.update({name:'vip'}, {cnt:cnt}, {upsert:true}, function(err,result){
+			if (err) {
+				console.log(err);
+			}
+		});
 	});
 }
 
@@ -127,10 +134,76 @@ function calcNFQ () {
 	})
 }
 
+// This function returns an ObjectId embedded with a given datetime
+// // Accepts both Date object and string input
+//
+function objectIdWithTimestamp(timestamp) {
+	// Convert string date to Date object (otherwise assume timestamp is a date)
+	if (typeof(timestamp) == 'string') {
+		timestamp = new Date(timestamp);
+	}
+
+	// Convert date object to hex seconds since Unix epoch
+	var hexSeconds = Math.floor(timestamp/1000).toString(16);
+
+	// Create an ObjectId with that hex timestamp
+	var constructedObjectId = ObjectID(hexSeconds + "0000000000000000");
+
+	return constructedObjectId
+}
+
+function objectIdToDate (id) {
+	var objId = new ObjectID(id);
+	return moment(objId.getTimestamp());
+}
+
 function calcRetention () {
+	// update retention data
+	var retstat = db.collection('retentionStat');
+	var yesstat = db.collection(yesterday+':retentionStat');
+	db.collection('retention', function(err,retcol){
+		var qry = {_id:{$lt:objectIdWithTimestamp(_60daysago)}};
+		retcol.find(qry).toArray(function(err,rets){
+			// delete these old retention data
+			for (var i in rets) {
+				var ret = rets[i];
+				if (ret.days) {
+					retstat.update({day:{$in:ret.days}}, {$inc:{cnt:-1}});
+					retcol.remove({uid:ret.uid});
+				}
+			}
+
+			for (var i in yesterdayUsers) {
+				var user = yesterdayUsers[i];
+				var days = yesterdayDate.diff(objectIdToDate(user._id)) + 1;
+				retstat.update({day:days}, {$inc:{cnt:1}});
+				retcol.update({uid:user.uid}, {$push:{days:days}});
+			}
+
+			// copy to yesterday's stat
+			retstat.find().forEach(function(x){yesstat.insert(x);});
+		});
+	})
 }
 
 function calcMap () {
+	var maps = {};
+	for (var i in yesterdayUsers) {
+		var user = yesterdayUsers[i];
+		if (user.finishedmap) {
+			for (var j in user.finishedmap) {
+				var mapid = user.finishedmap[j];
+				maps[mapid] = maps[mapid] || 0;
+				++maps[mapid];
+			}
+		}
+	}
+
+	arch.update({name:'finishedmap'}, {cnt:maps}, {upsert:true}, function(err,result){
+		if (err) {
+			console.log(err);
+		}
+	});
 }
 
 mongo.connect(mongourl + '/kpi', function(err, kpidb) {
