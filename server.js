@@ -1017,7 +1017,7 @@ wss.on('connection', function(ws) {
 			//@desc 生成随机装备
 			try {
 				var equipid = msg.data.id;
-				var equip = new Equip(table, equipid);
+				var equip = new Equip(equipid);
 			} catch (e) {
 				senderr(e.message);
 				return;
@@ -1420,7 +1420,7 @@ wss.on('connection', function(ws) {
 											senderr('equip_limit_err');
 										} else {
 											db.incr('next_equip_id:'+uid, check(function(index){
-												var equip = new Equip(table, id);
+												var equip = new Equip(id);
 												trans.hsetjson('equip', index, equip, check(function(){
 													sendobj(trans.obj);
 												}));
@@ -1577,7 +1577,7 @@ wss.on('connection', function(ws) {
 									if (equipcount < 999) {
 										++equipcount;
 										++next_equip_id;
-										addedequips[next_equip_id] = new Equip(table, res.id);
+										addedequips[next_equip_id] = new Equip(res.id);
 									} else {
 										del = false;
 									}

@@ -20,4 +20,8 @@ Util.prototype.updateLevel = function (newExp, lv, lvLimit, expTable) {
 	return [lv, newExp];
 }
 
+Util.prototype.randomIntBetween = function (min, max) {
+	  return Math.floor(Math.random() * (max - min)) + min;
+}
+
 module.exports = new Util;
