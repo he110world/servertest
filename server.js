@@ -276,9 +276,16 @@ sub.on('message', function(channel, message){
 function removeWs (ws) {
 	var uid = ws2uid[ws];
 	if (uid) {
+		console.log('rem %s ws2uid & uid2ws', uid);
 		delete ws2uid[ws];
 		delete uid2ws[uid];
 	}
+}
+
+function updateWs (oldws, ws, uid) {
+	delete ws2uid[oldws];
+	ws2uid[ws] = uid;
+	uid2ws[uid] = ws;
 }
 
 function roommsg (roomid, cmd, data) {
@@ -307,10 +314,10 @@ var MAX_ROOM_SIZE = 4;
 
 wss.on('connection', function(ws) {
 	ws.on('open', function() {
-		
 	});
 
 	ws.on('close', function(code, message) {
+		console.log('ws close %s %s', code, message);
 		var uid = ws2uid[ws];
 		if (uid) {
 			if (code == 4001) {	// kick. code 4000-4999 can be used by application.
@@ -318,14 +325,14 @@ wss.on('connection', function(ws) {
 			} else {
 				db.get('session:'+uid, function(err,sess) {
 					console.log('close: ' + uid);
+					console.log('close ws %s', uid);
 					delete uid2ws[uid];
 					db.del('session:'+uid, 'sessionuser:'+sess);
 					db.hset('role:'+uid, 'LastTime', Date.now())
 				});
 			}
-			delete ws2uid[ws];
 		} else {
-			console.log('invalid close: ' +  uid);
+			console.log('invalid close');
 		}
 	});
 
@@ -507,7 +514,7 @@ wss.on('connection', function(ws) {
 			var datalist = [];
 			var obj = {};
 			obj[board] = finallist;
-			if (ranges.length == 0) {
+			if (ranges.length === 0) {
 				sendobj(obj);
 				return;
 			}
@@ -998,7 +1005,7 @@ wss.on('connection', function(ws) {
 							// remove old, add new
 							var multi = db.multi();
 							if (oldnick) {
-								multi.srem('nickuid:'+oldnick, uid)	// remove old
+								multi.srem('nickuid:'+oldnick, uid);	// remove old
 							}
 							multi
 							.sadd('nickuid:'+newnick, uid)	// add new
@@ -2022,6 +2029,50 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
+		case 'addequipslot':
+			//@cmd addequipslot
+			//@data cnt
+			//@desc 增加装备格子
+			getuser(function(user, uid) {
+				var cnt = msg.data.cnt;
+				var cost = 1000;	//TODO: real cost
+				var maxSlots = 400;
+
+				// cost photon seed
+				db.hget('item:'+uid, 12001, check(function(photon){
+					var totalcost = cnt*cost;
+					if (totalcost > photon) {
+						senderr('not_enogh_12001_err');
+						return;
+					}
+
+					db.hget('role:'+uid, 'EquipSlot', check(function(slots){
+						if (slots + cnt > maxSlots) {
+							senderr('max_slots_err');
+							return;
+						}
+
+						var trans = new Transaction(db, uid);
+						trans
+						.multi()
+						.hincrby('role', 'EquipSlot', cnt)
+						.hincrby('item', 12001, -totalcost)
+						.exec(checklist(2,function(){
+							sendobj(trans.obj);
+						}));
+
+					}));
+				}));
+			});
+			break;
+		case 'sellequips':
+			//@cmd sellequips
+			//@data indices
+			//@desc 卖装备（参数是数组）
+			getuser(function(user,uid){
+				var indices = msg.data.indices;	//TODO check indices
+			});
+			break;
 		case 'view':
 			//@cmd view
 			//@data name
@@ -2194,6 +2245,7 @@ wss.on('connection', function(ws) {
 				senderr('msg_err');
 				return;
 			}
+			console.log('%s login', user);
 			
 			// user/pass valid?
 			db.get('user:'+user, check2err('user_not_exist', function(storedpass){
@@ -2210,9 +2262,15 @@ wss.on('connection', function(ws) {
 								var prevws = uid2ws[uid];
 								if (prevws) {	// same machine
 									if (prevws != ws) {
-										// kick
-										prevws.close(4001);
-										removeWs(prevws);
+										if (prevws.readyState != ws.CLOSED) {
+											// kick
+											prevws.close(4001);
+											console.log('kick1 %s', uid);
+											removeWs(prevws);
+										} else {
+											console.log('update %s', uid);
+											updateWs(prevws, ws, uid);
+										}
 									} else {
 										senderr('already_loggedin_err');
 										ok = false;
@@ -2257,6 +2315,7 @@ wss.kick = function (uid) {
 	var ws = uid2ws[uid];
 	if (ws) {
 		ws.close();
+		console.log('kick2');
 		removeWs(ws);
 	}
 }
@@ -2272,6 +2331,7 @@ wss.sendcmd = function (uid, cmd) {
 	var ws = uid2ws[uid];
 	if (ws) {
 		ws.send(JSON.stringify({cmd:cmd}));
+		console.log('send cmd %s to %s', cmd, uid);
 	} else {
 		console.log('invalid send: ' + uid);
 	}

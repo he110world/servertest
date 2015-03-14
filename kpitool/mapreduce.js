@@ -21,22 +21,7 @@ function err (str) {
 // });
 // > {"Android:1":10, "Android:2~10":5 ..}
 MapReduce.prototype.mapReduce = function (data, map, reduce, cb) {
-	if (typeof cb != 'function') {
-		err('no callback');
-		return;
-	}
-
-	if (typeof reduce != 'function') {
-		err('no reduce function');
-		return;
-	}
-
-	if (map.length <2 || map.length % 2 != 0) {
-		err('wrong parameters');
-		cb(true);
-		return;
-	}
-
+	// map
 	for (var i=0; i<map.length; i+=2) {
 		var type = map[i];
 		var func = map[i+1];
@@ -44,6 +29,8 @@ MapReduce.prototype.mapReduce = function (data, map, reduce, cb) {
 		} else if (type == 's') {	// slicer
 		}
 	}
+
+	// reduce
 };
 
 module.exports = new MapReduce();

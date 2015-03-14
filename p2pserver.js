@@ -20,7 +20,8 @@ var MsgType = {
 	PONG: 4,
 	SYNC: 5,
 	MSG : 6,
-	ACK : 7
+	ACK : 7,
+	DEBUG : 255
 };
 
 var endpoints = {};
@@ -45,11 +46,15 @@ server.on('message', function (msg, remote) {
 			var buf = Buffer.concat([msg, buf1, buf2]);
 			server.send(buf, 0, buf.length, remote.port, remote.address);
 		}
+	} else if (type == MsgType.DEBUG) {
+		console.log('%s dbg: %s', msg.readInt32LE(2), msg.toString('ascii',12));
 	} else {	// relay
 		var uid = msg.readInt32LE(6);
 		var ep = endpoints[uid];
 		if (ep) {
-			//console.log('relay',msg);
+			if (type == MsgType.MSG) {
+				console.log('msg -> %s', uid);
+			}
 			server.send(msg, 0, msg.length, ep.port, ep.address);
 		}
 	}

@@ -50,6 +50,12 @@ mongo.connect(mongourl + '/kpi', function(err, db) {
 			var cmd = JSON.parse(str);
 			console.log(cmd);
 
+			var onErr = function (err){
+				if (err) {
+					throw new Error();
+				}
+			};
+
 			//[<op type>, <collection>, <query>, <field>, <val>]*
 			for (var i=0; i<cmd.length; i+=5) {
 				// collection
@@ -79,11 +85,7 @@ mongo.connect(mongourl + '/kpi', function(err, db) {
 					throw new Error();
 				}
 
-				col.update(qryobj, updobj, {upsert:true}, function(err){
-					if (err) {
-						throw new Error();
-					}
-				});
+				col.update(qryobj, updobj, {upsert:true}, onErr);
 			}
 		} catch (e) {
 			console.log('invalid json: '+str);
