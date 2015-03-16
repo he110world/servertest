@@ -9,8 +9,17 @@ function Transaction (db, uid) {
 function merge(obj, key, value) {
 	if (typeof key == 'string')
 		return merge(obj, key.split('.'), value);
-	else if (key.length==1 && value!==undefined)
-		return obj[key[0]] = value;
+	else if (key.length==1 && value!==undefined) {
+		var mobj = obj[key[0]];
+		if (typeof mobj == 'object' && typeof value == 'object') {
+			for (var v in value) {
+				mobj[v] = value[v];
+			}
+			return mobj;
+		} else {
+			return obj[key[0]] = value;
+		}
+	}
 	else if (key.length==0)
 		return obj;
 	else {

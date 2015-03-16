@@ -35,52 +35,6 @@ var wss = new WebSocketServer({port: port});
 var uid2ws = {};	// uid->ws
 var ws2uid = {};
 var appid = randomString(32);
-var defaultStates = {dev:0, ver:"1.0", map:0, map2:0, lv:1, payday:0, payall:0};
-
-function setstate (uid, states, cb) {
-	db.hmset('state:'+uid, states, function(err){
-		if (err) {
-			console.log(err);
-		}
-		cb();
-	});
-}
-
-function incrstate (uid, field, incr, cb) {
-	db.hincrby('state:'+uid, field, incr, function(err){
-		if (err) {
-			console.log(err);
-		}
-		cb();
-	});
-}
-
-function logstate (uid, data) {
-	// get states for every log
-	//
-	// device type : 1 - iOS, 2 - Android
-	// app ver. : string
-	// role level : role.Lv
-	// map level : maplv & mmaplv
-	// daily vip : dailyvip
-	// vip : vip
-	//
-	// hash: state:<uid> { dev: <int>, ver: <string>, map: <int>, map2: <int>, lv:<int>, pay:<int> }
-	db.hgetall('state:'+uid, function(err, states) {
-		if (err) {
-			console.log(err);
-		} else {
-			states = states || {};
-			states[uid] = uid;
-			for (var k in defaultStates) {
-				states[k] = states[k] || defaultStates[k];
-			}
-			for (var k in data) {
-				states[k] = data[k];
-			}
-		}
-	});
-}
 
 function response (ws, cmd, data, id) {
 	if (ws.readyState != ws.OPEN) {
@@ -227,9 +181,9 @@ sub.on('message', function(channel, message){
 		
 		// find users in the room
 		db.lrange('room:'+roomid, 0, -1, function(err, uids){
-			if (msg.op == 'chat') {
+			if (msg.op == 'chat' || msg.op == 'off') {
 				for (var i=0; i<uids.length; i++) {
-					wss.sendobj(uids[i], 'chat', {msg:msg.data});
+					wss.sendmsg(uids[i], msg.op, msg.data);
 				}
 			} else if (msg.op == 'quit') {
 				console.log('send quit',uids);
@@ -331,6 +285,11 @@ wss.on('connection', function(ws) {
 					db.hset('role:'+uid, 'LastTime', Date.now())
 				});
 			}
+			db.get('roomid:'+uid, function(err,roomid){
+				if (roomid) {
+					roommsg(roomid, 'off', {uid:uid});
+				}
+			});
 		} else {
 			console.log('invalid close');
 		}
@@ -690,6 +649,11 @@ wss.on('connection', function(ws) {
 
 		function quitroom (uid, cb) {
 			db.get('roomid:'+uid, check(function(roomid){
+				if (!roomid) {
+					cb(uid, roomid);
+					return;
+				}
+
 				console.log('quitroom',uid,roomid);
 				db.lrange('room:'+roomid, 0, -1, check(function(room){
 					// not in this room
@@ -981,7 +945,7 @@ wss.on('connection', function(ws) {
 			getuser(function(user,uid){
 				db.get('roomid:'+uid, check2(function(roomid){
 					sendnil();
-					roommsg(roomid, 'chat', {ID:uid, msg:msg.data.msg});
+					roommsg(roomid, 'chat', {msg:{ID:uid, msg:msg.data.msg}});
 				}));
 			});
 			break;
@@ -1024,7 +988,7 @@ wss.on('connection', function(ws) {
 			//@desc 生成随机装备
 			try {
 				var equipid = msg.data.id;
-				var equip = new Equip(equipid);
+				var equip = new Equip(table, equipid);
 			} catch (e) {
 				senderr(e.message);
 				return;
@@ -1032,7 +996,11 @@ wss.on('connection', function(ws) {
 			getuser(function(user,uid){
 				db.incr('next_equip_id:'+uid, check2(function(index){
 					var trans = new Transaction(db, uid);
-					trans.hsetjson('equip', index, equip, check(function(){
+					trans
+					.multi()
+					.hsetjson('equip', index, equip)
+					.hset('girlequip', index, 0)
+					.exec(check(function(){
 						sendobj(trans.obj);
 					}));
 				}));
@@ -1427,8 +1395,12 @@ wss.on('connection', function(ws) {
 											senderr('equip_limit_err');
 										} else {
 											db.incr('next_equip_id:'+uid, check(function(index){
-												var equip = new Equip(id);
-												trans.hsetjson('equip', index, equip, check(function(){
+												var equip = new Equip(table, id);
+												trans
+												.multi()
+												.hsetjson('equip', index, equip)
+												.hset('girlequip', index, 0)
+												.exec(check(function(){
 													sendobj(trans.obj);
 												}));
 											}));
@@ -1584,7 +1556,7 @@ wss.on('connection', function(ws) {
 									if (equipcount < 999) {
 										++equipcount;
 										++next_equip_id;
-										addedequips[next_equip_id] = new Equip(res.id);
+										addedequips[next_equip_id] = new Equip(table, res.id);
 									} else {
 										del = false;
 									}
@@ -1622,7 +1594,9 @@ wss.on('connection', function(ws) {
 							// equips
 							if (equipcount > oldequipcount) {
 								for (var index in addedequips) {
-									multi.hsetjson('equip', index, addedequips[index]);
+									multi
+									.hsetjson('equip', index, addedequips[index])
+									.hset('girlequip', index, 0);
 								}
 								multi.server().set('next_equip_id', next_equip_id);
 							}
@@ -1818,6 +1792,187 @@ wss.on('connection', function(ws) {
 				} catch (e) {
 					senderr('data_err:shopid,itemid');
 				}
+			});
+			break;
+		case 'setequip':
+			//@cmd setequip
+			//@data girlid
+			//@data equipidx
+			//@data pos
+			//@desc 战姬穿装备(e.g. setequip 130001 20 3)
+			getuser(function(user, uid){
+				try {
+					var girlid = msg.data.girlid;
+					var equipIdx = msg.data.equipidx;
+					var pos = msg.data.pos;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+				
+				var girlPos = girlid + ':' + pos;
+				var key = 'girlequip:'+uid;
+				db.hmget(key, [girlPos, equipIdx], check(function(list){
+					var prevEquipIdx = list[0];
+					var prevGirlPos = list[1];
+					var mod = {};
+					var del = [];
+					var moded = false;
+					if (prevEquipIdx && prevEquipIdx != 0) {	// girl:pos already has equip => equip.girl:pos = 0
+						mod[prevEquipIdx] = 0;
+						moded = true;
+					}
+					if (prevGirlPos && prevGirlPos != 0) { // equip already has girl:pos => del girl:pos.equip
+						del.push(prevGirlPos);
+					}
+					if (equipIdx && equipIdx != 0) {
+						mod[equipIdx] = girlPos;
+						moded = true;
+					} else {
+						del.push(girlPos);
+					}
+
+					if (girlPos != 0) {
+						mod[girlPos] = equipIdx;
+						moded = true;
+					}
+					if (del.length>0 || moded) {
+						var trans = new Transaction(db, uid);
+						var multi = trans.multi();
+						if (del.length>0) {
+							multi.hdel('girlequip', del);
+						}
+						if (moded) {
+							multi.hmset('girlequip', mod);
+						}
+						multi.exec(check(function(){
+							sendobj(trans.obj);
+						}));
+					} else {
+						sendnil();
+					}
+				}));
+			});
+			break;
+		case 'sellequips':
+			//@cmd sellequip
+			//@data equipidx
+			//@desc 卖掉装备（参数：装备index数组）
+			getuser(function(user, uid){
+				try {
+					var equipindices = msg.data.equipidx;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				db.hmget('equip:'+uid, equipindices, check(function(jsonList){
+					// give me money
+					var totalMoney = 0;
+					for (var i in jsonList) {
+						var idx = equipindices[i];
+						var json = jsonList[i];
+						if (!json || typeof json != 'string' || json.length < 11) {
+							continue;
+						}
+
+						var equipId = json.substr(6,5);	//HACK!!
+						totalMoney += table.equip[equipId].Credit;
+					}
+
+					// delete equip
+					db.hmget('girlequip:'+uid, equipindices, check(function(prevGirlPosList){
+						// reset relation
+						var trans = new Transaction(db, uid);
+						var del = [];
+						for (var i in prevGirlPosList) {
+							var girlpos = prevGirlPosList[i];
+							if (girlpos && girlpos != 0) {
+								del.push(girlpos, equipindices[i]);
+							}
+						}
+						var multi = trans.multi();
+						if (del.length > 0) {
+							multi.hdel('girlequip', del);
+						}
+						multi
+						.hdel('equip', equipindices)
+						.hincrby('item', 12000, totalMoney)
+						.exec(function() {
+							sendobj(trans.obj);
+						});
+					}));
+				}));
+			});
+			break;
+		case 'addequipslot':
+			//@cmd addslot
+			//@data cnt
+			//@desc 增加装备格子
+			getuser(function(user, uid){
+				try {
+					var cnt = parseInt(msg.data.cnt) || 1;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				var cost = cnt * 100;
+				db.hget('item:'+uid, 12001, check(function(photon){
+					if (photon < cost) {
+						senderr('not_enough_12001_err');
+						return;
+					}
+					db.hget('role:'+uid, 'EquipSlot', check(function(numSlots){
+						var n = parseInt(numSlots);
+						if (n < 30) {
+							n = 30;
+						}
+						var newcnt = cnt + n;
+						if (newcnt > 400) {	//TODO: settings
+							senderr('max_slots_err');
+							return;
+						}
+
+						var trans = new Transaction(db, uid);
+						trans
+						.multi()
+						.hincrby('item', 12001, -cost)
+						.hset('role', 'EquipSlot', newcnt)
+						.exec(check(function(){
+							sendobj(trans.obj);
+						}));
+					}));
+				}));
+			});
+			break;
+		case 'finishmap':
+			//@cmd finishmap
+			//@data mapid
+			//@data rank
+			//@desc 地图过关
+			getuser(function(user, uid){
+				try {
+					var mapid = msg.data.mapid;
+					var rank = msg.data.rank;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				db.hget('map.'+mapid+':'+uid, rank, check(function(oldrank){
+					var trans = new Transaction(db, uid);
+					var key = 'map.'+mapid;
+					var multi = trans.multi()
+					if (rank > oldrank) {
+						multi.hset(key, 'rank', rank);
+					}
+					multi
+					.hincrby(key, 'cnt', 1)
+					.exec(check(function(){
+						sendobj(trans.obj);
+					}));
+				}));
 			});
 			break;
 		case 'buygirl':
@@ -2187,6 +2342,16 @@ wss.on('connection', function(ws) {
 							sendobj(trans.obj);
 						}));
 						break;
+					case 'girlequip':
+						trans.hgetall('girlequip', check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
+					case 'map':
+						trans.hgetall('map', check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
 						/*
 					case 'gift':
 						trans.hgetjson('gift', msg.data.id, check(function(){
@@ -2225,7 +2390,6 @@ wss.on('connection', function(ws) {
 							newRole.newRole(uid);
 							db.hmset('role:'+uid, newRole, check(function(){
 								sendnil();
-								logstate(uid, {reg:1});
 							}));
 						}));
 					}));
@@ -2291,7 +2455,6 @@ wss.on('connection', function(ws) {
 											uid2ws[uid] = ws;
 											ws2uid[ws] = uid;
 											sendobj({session:session});
-											logstate(uid, {login:1});
 										}));
 									}));
 								});	
@@ -2342,6 +2505,18 @@ wss.sendobj = function (uid, cmd, obj) {
 	if (ws) {
 		try {
 			var datastr = JSON.stringify({cmd:cmd, data:obj});
+			ws.send(datastr);
+		} catch (e) {
+		}
+	}
+}
+
+wss.sendmsg = function (uid, cmd, msg) {
+	var ws = uid2ws[uid];
+	if (ws) {
+		try {
+			msg.cmd = cmd;
+			var datastr = JSON.stringify(msg);
 			ws.send(datastr);
 		} catch (e) {
 		}

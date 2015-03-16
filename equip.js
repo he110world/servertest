@@ -1,6 +1,20 @@
 var util = require('./util');
 
-function Equip (id, mapLevel) {
+function Equip (table, equipId, mapLevel) {
+	this.ID = equipId;
+	if (table.equip[equipId].ExtendAdd1) {	// not random
+		this.Rare = table.equip[equipId].Rare;
+		for (var i=1; i<=3; i++) {
+			var ex = table.equip[equipId]['ExtendAdd'+i];
+			if (!ex) {
+				break;
+			}
+			this['ExtendAdd'+i] = ex;
+			this['AddValue'+i] = table.equip[equipId]['AddValue'+i];
+		}
+		return;
+	}
+
 	mapLevel = mapLevel || 1;
 
 	// how many extended properties?
@@ -34,19 +48,13 @@ function Equip (id, mapLevel) {
 			var isGood = Math.random() > badPercent;
 			var goodness = isGood * 5 + util.randomIntBetween(1,5);
 
-			var id = type * 20 + isAdd * 10 + goodness;
+			var id = isAdd * 10 + goodness;
 			point += goodPoint[goodness];
 
 			// write type
 			var idx = i+1;
 			this['ExtendAdd'+idx] = type+1;
-
-			// write value
-			if (isAdd) {	// positive
-				this['AddValue'+idx] = goodness * addFactor[goodness];
-			} else {		// negative
-				this['AddValue'+idx] = -goodness;
-			}
+			this['AddValue'+idx] = id;
 		}
 	}
 
@@ -64,7 +72,6 @@ function Equip (id, mapLevel) {
 		rare = 5;
 	}
 	this.Rare = rare;
-	this.ID = id;
 }
 
 module.exports = Equip;

@@ -15,6 +15,7 @@ Role.prototype.newRole = function (id) {
 	this.FriendCoin = 0;
 	this.OddCoin = 0;
 	this.Cost = 50;
+	this.EquipSlot = 30;
 }
 
 Role.prototype.checkVar = function () {
