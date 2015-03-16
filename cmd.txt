@@ -36,8 +36,14 @@ useitem,{"cmd":"useitem";"data":{"itemid":{0};"targetid":{1}};"session":{2}},使
 getactiveitem,{"cmd":"getactiveitem";"session":{0}},获取当前正在使用的道具{ID:id Timeout:ms}
 sellitem,{"cmd":"sellitem";"data":{"itemid":{0};"count":{1}};"session":{2}},卖道具
 buyitem,{"cmd":"buyitem";"data":{"shopid":{0};"itemid":{1}};"session":{2}},买物品
+setequip,{"cmd":"setequip";"data":{"girlid":{0};"equipidx":{1};"pos":{2}};"session":{3}},战姬穿装备(e.g. setequip 130001 20 3)
+sellequips,{"cmd":"sellequips";"data":{"equipidx":{0}};"session":{1}},卖掉装备（参数：装备index数组）
+addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
+finishmap,{"cmd":"finishmap";"data":{"mapid":{0};"rank":{1}};"session":{2}},地图过关
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
 setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
+addequipslot,{"cmd":"addequipslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
+sellequips,{"cmd":"sellequips";"data":{"indices":{0}};"session":{1}},卖装备（参数是数组）
 view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
 reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
 login,{"cmd":"login";"data":{"user":{0};"pass":{1}}},登录
