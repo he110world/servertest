@@ -49,6 +49,20 @@ function response (ws, cmd, data, id) {
 	ws.send(JSON.stringify(resp));
 }
 
+function responseJson (ws, cmd, data, id) {
+	if (ws.readyState != ws.OPEN) {
+		return;
+	}
+	var resp = {};
+	resp.isJson = true;	// client should parse values
+	resp.cmd = cmd;
+	resp.data = data;
+	if (id) {
+		resp.id = id;
+	}
+	ws.send(JSON.stringify(resp));
+}
+
 function responseErr (ws, cmd, err, id) {
 	if (ws.readyState != ws.OPEN) {
 		return;
@@ -394,6 +408,10 @@ wss.on('connection', function(ws) {
 
 		function sendobj (data) {
 			response(ws, msg.cmd, data, msg.id);
+		}
+
+		function sendjson (data) {
+			responseJson(ws, msg.cmd, data, msg.id);
 		}
 
 		function sendtemp (data) {
@@ -999,7 +1017,7 @@ wss.on('connection', function(ws) {
 					trans
 					.multi()
 					.hsetjson('equip', index, equip)
-					.hset('girlequip', index, 0)
+//					.hset('girlequip', index, 0)
 					.exec(check(function(){
 						sendobj(trans.obj);
 					}));
@@ -1399,7 +1417,7 @@ wss.on('connection', function(ws) {
 												trans
 												.multi()
 												.hsetjson('equip', index, equip)
-												.hset('girlequip', index, 0)
+//												.hset('girlequip', index, 0)
 												.exec(check(function(){
 													sendobj(trans.obj);
 												}));
@@ -1595,8 +1613,8 @@ wss.on('connection', function(ws) {
 							if (equipcount > oldequipcount) {
 								for (var index in addedequips) {
 									multi
-									.hsetjson('equip', index, addedequips[index])
-									.hset('girlequip', index, 0);
+									.hsetjson('equip', index, addedequips[index]);
+//									.hset('girlequip', index, 0);
 								}
 								multi.server().set('next_equip_id', next_equip_id);
 							}
@@ -1805,6 +1823,9 @@ wss.on('connection', function(ws) {
 					var girlid = msg.data.girlid;
 					var equipIdx = msg.data.equipidx;
 					var pos = msg.data.pos;
+					if (equipIdx==0 && pos==0) {
+						senderr('param_err');
+					}
 				} catch (e) {
 					senderr('param_err');
 					return;
@@ -1819,8 +1840,9 @@ wss.on('connection', function(ws) {
 					var del = [];
 					var moded = false;
 					if (prevEquipIdx && prevEquipIdx != 0) {	// girl:pos already has equip => equip.girl:pos = 0
-						mod[prevEquipIdx] = 0;
-						moded = true;
+//						mod[prevEquipIdx] = 0;
+//						moded = true;
+						del.push(prevEquipIdx);
 					}
 					if (prevGirlPos && prevGirlPos != 0) { // equip already has girl:pos => del girl:pos.equip
 						del.push(prevGirlPos);
@@ -1855,7 +1877,7 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'sellequips':
-			//@cmd sellequip
+			//@cmd sellequips
 			//@data equipidx
 			//@desc 卖掉装备（参数：装备index数组）
 			getuser(function(user, uid){
@@ -1950,26 +1972,33 @@ wss.on('connection', function(ws) {
 			//@cmd finishmap
 			//@data mapid
 			//@data rank
-			//@desc 地图过关
+			//@desc 地图过关（mapid:rank$count）
 			getuser(function(user, uid){
 				try {
 					var mapid = msg.data.mapid;
-					var rank = msg.data.rank;
+					var rank = parseInt(msg.data.rank);
+					if (!table.map[mapid] || rank<0 || rank>3) {
+						throw new Error();
+					}
 				} catch (e) {
 					senderr('param_err');
 					return;
 				}
 
-				db.hget('map.'+mapid+':'+uid, rank, check(function(oldrank){
-					var trans = new Transaction(db, uid);
-					var key = 'map.'+mapid;
-					var multi = trans.multi()
-					if (rank > oldrank) {
-						multi.hset(key, 'rank', rank);
+				db.hget('map:'+uid, mapid, check(function(mapdata){
+					var oldrank = 0;
+					var oldcount = 0;
+					if (mapdata) {
+						var datalist = mapdata.split('$');
+						oldrank = datalist[0];
+						oldcount = Math.floor(datalist[1]);
 					}
-					multi
-					.hincrby(key, 'cnt', 1)
-					.exec(check(function(){
+					if (rank < oldrank) {
+						rank = oldrank;
+					}
+					var count = oldcount + 1;
+					var trans = new Transaction(db, uid);
+					trans.hset('map', mapid, rank+'$'+count, check(function(){
 						sendobj(trans.obj);
 					}));
 				}));
@@ -2232,7 +2261,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
+			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip girlequip allgift maps（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
@@ -2338,8 +2367,8 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 					case 'equip':
-						trans.hgetjson('equip', msg.data.id, check(function(){
-							sendobj(trans.obj);
+						trans.hgetall('equip', check(function(){
+							sendjson(trans.obj);
 						}));
 						break;
 					case 'girlequip':
