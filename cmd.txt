@@ -44,7 +44,7 @@ buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item�
 setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
 addequipslot,{"cmd":"addequipslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
 sellequips,{"cmd":"sellequips";"data":{"indices":{0}};"session":{1}},卖装备（参数是数组）
-view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
+view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip equips allgift（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}）
 reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
 login,{"cmd":"login";"data":{"user":{0};"pass":{1}}},登录
 
