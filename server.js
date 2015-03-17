@@ -23,6 +23,7 @@ var Role = require('./role');
 var Girl = require('./girl');
 var Equip = require('./equip');
 var Gift = require('./gift');
+var Util = require('./util');
 var GIRL_PRICE = 100;
 
 // kpi
@@ -1089,7 +1090,8 @@ wss.on('connection', function(ws) {
 						senderr('data_err');
 					} else {
 						var role = new Role(table);
-						role.Lv = data[0];
+						var oldLv = data[0];
+						role.Lv = oldLv;
 						role.RoleExp = data[1];
 						try {
 							var mod = role.addExp(expinc);
@@ -1097,6 +1099,8 @@ wss.on('connection', function(ws) {
 								sendobj(trans.obj);
 
 								if (mod.Lv) {
+									// update Lv (score)
+									db.zadd('rolelv', mod.Lv, uid);
 									kpi.levelUp(uid, mod.Lv);
 								}
 							}));
@@ -1127,6 +1131,65 @@ wss.on('connection', function(ws) {
 				} catch (e) {
 					senderr('data_err:id,count');
 				}
+			});
+			break;
+		case 'randombuddy':
+			getuser(function(user, uid){
+				db.hget('role:'+uid, 'Lv', check(function(lv){
+					lv = Math.floor(lv);
+					var min, max;
+					if (lv<30) {	// search 20-40
+						min = 20;
+						max = 40;
+					} else {	// search +-10
+						min = lv-10;
+						max = lv+10;
+					}
+					db.zrangebyscore('rolelv', min, min, 'limit', 0, 1, check(function(minrank){
+						db.zrangebyscore('rolelv', max, max, 'limit', 0, 1, check(function(maxrank){
+
+						}));
+					}));
+					db.zrank('rolelv', uid, check(function(rank){
+
+					}));
+					db.zcount('rolelv', min, max, check(function(cnt){
+						if (cnt == 0) {
+							db.zcard('rolelv', check(function(allcnt){
+								if (allcnt == 0) {
+									sendobj({buddy:[]});
+								} else {
+									var buddyranks = [];
+									var loopmax = allcnt < 3 ? allcnt : 3;
+									while(true) {
+										var r = Util.randomIntBewteen(0, loopmax-1);
+										if (buddyranks.indexOf(r) == -1) {
+											buddyranks.push(r);
+										}
+										if (buddyranks.length >= loopmax) {
+											break;
+										}
+									}
+									var buddy = [];
+									var cnt = 0;
+									buddyranks.forEach(function(r){
+										db.zrange('rolelv', r, r, check(function(uids){
+											++cnt;
+											if (uids[0]) {
+												buddy.push(uids[0]);
+											}
+											if (cnt == loopmax) {
+												sendobj({buddy:buddy});
+											}
+										}));
+									});
+								}
+							}));
+						} else {
+							
+						}
+					}));
+				}));
 			});
 			break;
 		case 'queryfriend':
@@ -2418,6 +2481,8 @@ wss.on('connection', function(ws) {
 							var newRole = new Role();
 							newRole.newRole(uid);
 							db.hmset('role:'+uid, newRole, check(function(){
+								// add to level:1 set
+								db.zadd('rolelv', 1, uid);
 								sendnil();
 							}));
 						}));
