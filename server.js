@@ -96,17 +96,22 @@ function publishData (pub, channel, data) {
 
 function randomString(bits){
 	var chars,rand,i,ret;
-	chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+	chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 	ret='';
 	// in v8, Math.random() yields 32 pseudo-random bits (in spidermonkey it gives 53)
 	while(bits > 0){
 		rand=Math.floor(Math.random()*0x100000000); // 32-bit integer
 		// base 64 means 6 bits per character, so we use the top 30 bits from rand to give 30/6=5 characters.
 		for(i=26; i>0 && bits>0; i-=6, bits-=6) {
-			ret+=chars[0x3F & rand >>> i];
+			ret+=chars[0x3D & rand >>> i];
 		}
 	}
 	return ret;
+}
+
+function HandOver () {
+	  this.ID = randomString(32);
+	  this.Pass = '';
 }
 
 function generateSession (cb) {
@@ -214,6 +219,10 @@ sub.on('message', function(channel, message){
 					wss.kick(msg.uid);
 				}
 				break;
+			case 'kickall':
+				console.log('kickall');
+				wss.kick(msg.uid);
+				break;
 			case 'notify':
 				wss.notify(msg.uid, msg.msgstr);
 				break;
@@ -277,6 +286,10 @@ function notifymsg (uid, msg) {
 
 function kickmsg (uid) {
 	publishData(pub, 'user', {cmd:'kick', uid:uid, appid:appid});
+}
+
+function kickall (uid) {
+	publishData(pub, 'user', {cmd:'kickall', uid:uid});
 }
 
 var MAX_ROOM_SIZE = 4;
@@ -462,6 +475,7 @@ wss.on('connection', function(ws) {
 
 		var GIRL_GIFT = 14017;
 		var SAME_GIRL_GIFT = 14018;
+		var MAX_FRIENDS = 50;
 		function addgirl(trans, uid, girlid, price) {
 			// already exist?
 			db.sismember('girls:'+uid, girlid, check(function(exist){
@@ -1264,12 +1278,18 @@ wss.on('connection', function(ws) {
 						senderr('data_err');
 						return;
 					}
-					db.sadd('pendingfriends:'+target, uid, check(function(){
-						sendnil();
-						var data = {};
-						data.pendingfriends = {};
-						data.pendingfriends[uid] = 1;
-						notifymsg(target, {cmd:'view', data:data});
+					db.scard('friends:'+target, check(function(cnt){
+						if (cnt >= MAX_FRIENDS) {
+							senderr('friend_full_err');
+						} else {
+							db.sadd('pendingfriends:'+target, uid, check(function(){
+								sendnil();
+								var data = {};
+								data.pendingfriends = {};
+								data.pendingfriends[uid] = 1;
+								notifymsg(target, {cmd:'view', data:data});
+							}));
+						}
 					}));
 				} catch (e) {
 					senderr('data_err:target');
@@ -1323,26 +1343,32 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.multi()
-					.srem('pendingfriends:'+uid, target)
-					.sadd('friends:'+uid, target)
-					.sadd('friends:'+target, uid)
-					.exec(checklist(3,function(){
-						var userdata = {};
-						userdata.pendingfriends = {};
-						userdata.pendingfriends[target] = null;
-						userdata.friends = {};
-						userdata.friends[target] = 1;
-						sendobj(userdata);
-
-						var targetdata = {};
-						targetdata.friends = {};
-						targetdata.friends[uid] = 1;
-						notifymsg(target, {cmd:'view', data:targetdata});
-					}));
 				} catch (e) {
 					senderr('data_err:target');
 				}
+				db.scard('friends:'+target, check(function(cnt){
+					if (cnt >= MAX_FRIENDS) {
+						senderr('friend_full_err');
+					} else {
+						db.multi()
+						.srem('pendingfriends:'+uid, target)
+						.sadd('friends:'+uid, target)
+						.sadd('friends:'+target, uid)
+						.exec(checklist(3,function(){
+							var userdata = {};
+							userdata.pendingfriends = {};
+							userdata.pendingfriends[target] = null;
+							userdata.friends = {};
+							userdata.friends[target] = 1;
+							sendobj(userdata);
+
+							var targetdata = {};
+							targetdata.friends = {};
+							targetdata.friends[uid] = 1;
+							notifymsg(target, {cmd:'view', data:targetdata});
+						}));
+					}
+				}));
 			});
 			break;
 		case 'declinefriend':
@@ -1862,34 +1888,41 @@ wss.on('connection', function(ws) {
 		case 'buyitem':
 			//@cmd buyitem
 			//@data shopid
-			//@data itemid
 			//@desc 买物品
 			getuser(function(user, uid){
 				// cost
 				try {
-					var money = msg.data.shopid;
-					var itemid = msg.data.itemid;
-					if (money < 12000 || money > 12003) {
+					var shopid = msg.data.shopid;
+					var shop = table.shop[shopid];
+					if (!shop) {
 						senderr('wrong_shop_err');
 						return;
 					}
+				} catch (e) {
+					senderr('data_err:shopid,itemid');
+				}
 
-					db.hget('item:'+uid, money, check(function(count){
-						var cost = table.item[itemid][money];
-						if (cost > count) {
+				var money = 12000 + shop.Type;
+				if (money == 12004) {	// TODO: RMB
+					var trans = new Transaction(db, uid);
+					trans.hincrby('item', shop.ItemID, shop.Num, check(function(){
+						sendobj(trans.obj);
+					}));
+				} else {
+					db.hget('item:'+uid, money, check(function(hasmoney){
+						var cost = shop[money+'Shop'];
+						if (cost > hasmoney) {
 							senderr('not_enough_item_err');
 						} else {
 							var trans = new Transaction(db, uid);
 							trans.multi()
 							.hincrby('item', money, -cost)
-							.hincrby('item', itemid, 1)
+							.hincrby('item', shop.ItemID, shop.Num)
 							.exec(checklist(2,function(res){
 								sendobj(trans.obj);
 							}));
 						}
 					}));
-				} catch (e) {
-					senderr('data_err:shopid,itemid');
 				}
 			});
 			break;
@@ -2347,6 +2380,11 @@ wss.on('connection', function(ws) {
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
 				switch (viewname) {
+					case 'handover':
+						trans.hgetall('handover', check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
 					case 'role':
 						trans.hgetall('role', check2(function(role){
 							sendobj(trans.obj);
@@ -2475,6 +2513,171 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 				}
+			});
+			break;
+		case 'regUDID':
+			//@cmd regUDID
+			//@data udid
+			//@nosession
+			//@desc 注册用户
+			try {
+				var user = msg.data.udid;
+				if (!user) {
+					throw new Error();
+				}
+			} catch (e) {
+				senderr('msg_err');
+				return;
+			}
+			db.sadd('udids', user, check2err('udid_exist',function(){
+				db.incr('next_account_id', check(function(uid){
+					db.set('accountid:'+user, uid, check2(function(){
+						// create role
+						var newRole = new Role();
+						newRole.newRole(uid);
+						var handover = new HandOver();
+						db.hmset('role:'+uid, newRole, check(function(){
+							db.hmset('handover:'+uid, handover, check(function(){
+								//handoverID:udid$uid
+								db.hset('handover2uid', handover.ID, udid+'$'+uid, check(function(){
+									// add to level:1 set
+									db.zadd('rolelv', 1, uid);
+									sendnil();
+								}));
+							}));
+						}));
+					}));
+				}));
+			}));
+			break;
+		case 'loginUDID':
+			//@cmd loginUDID
+			//@data udid
+			//@nosession
+			//@desc 登录
+			try {
+				var user = msg.data.udid;
+				if (!user) {
+					throw new Error();
+				}
+			} catch (e) {
+				senderr('msg_err');
+				return;
+			}
+			console.log('%s login', user);
+			
+			// user/pass valid?
+			db.get('accountid:'+user, check2(function(uid){
+
+				// session exist - multiple logins
+				db.get('session:'+uid, check(function(oldsess){
+					var ok = true;
+					if (oldsess) {
+						// kick the prev user
+						var prevws = uid2ws[uid];
+						if (prevws) {	// same machine
+							if (prevws != ws) {
+								if (prevws.readyState != ws.CLOSED) {
+									// kick
+									prevws.close(4001);
+									console.log('kick1 %s', uid);
+									removeWs(prevws);
+								} else {
+									console.log('update %s', uid);
+									updateWs(prevws, ws, uid);
+								}
+							} else {
+								senderr('already_loggedin_err');
+								ok = false;
+							}
+						} else {
+							kickmsg(uid);
+						}
+					} 
+					if (ok) {
+						generateSession(function(session){
+							// destroy previous sessionuser
+							db.getset('session:'+uid, session, check(function(oldsession){
+								db.multi()
+								.del('sessionuser:'+oldsession)
+								.set('sessionuser:'+session, user)
+								.hset('role:'+uid, 'LastTime', Date.now())
+								.exec(checklist(3,function(res){
+									uid2ws[uid] = ws;
+									ws2uid[ws] = uid;
+									sendobj({session:session});
+								}));
+							}));
+						});	
+					}
+				}));
+			}));
+			break;
+		case 'handoverUDID':
+			//@cmd handOverUDID
+			//@data udid
+			//@data handid
+			//@data handpass
+			//@nosession
+			//@desc 账户交接
+			try {
+				var udid = msg.data.udid;
+				var handid = msg.data.handid;
+				var handpass = msg.data.handpass;
+			} catch (e) {
+				senderr('msg_err');
+				return;
+			}
+			//handid => udid
+			db.hget('handover2uid', handid, check2(function(udid$uid){
+				var uu = udid$uid.split(':');
+				var oldudid = uu[0];
+				if (udid == oldudid) {
+					senderr('same_udid_err');
+					return;
+				}
+				var uid = uu[1];
+				db.hget('handover:'+uid, 'Pass', check(function(pass){
+					if (handpass != pass) {
+						senderr('pass_err');
+						return;
+					}
+					
+					db.multi()
+					.hset('handover2uid', handid, udid+':'+uid)
+					.srem('udids', oldudid)
+					.sadd('udids', udid)
+					.set('accountid:'+udid, uid)
+					.del('accountid:'+oldudid)
+					.exec(check(function(){
+						// kick old user
+						kickall(uid);
+						sendnil();
+					}));
+				}));
+			}));
+			break;
+		case 'setHandOverPass':
+			//@cmd setHandOverPass
+			//@data pass
+			//@desc 设置交接账户密码
+			try {
+				var pass = msg.data.pass;
+				if (typeof pass != 'string' 
+						|| pass.length<8 
+						|| pass.length>16
+						|| !/^[a-z0-9]+$/i.test(pass)) {
+					throw new Error();
+				}
+			} catch (e) {
+				senderr('msg_err');
+				return;
+			}
+			getuser(function(user, uid){
+				var trans = new Transaction(db, uid);
+				trans.hset('handover', 'Pass', pass, check(function(){
+					sendobj(trans.obj);
+				}));
 			});
 			break;
 		case 'reg':

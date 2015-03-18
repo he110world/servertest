@@ -10,10 +10,6 @@ Role.prototype.newRole = function (id) {
 	this.ID = id;
   	this.Lv = 1;
 	this.RoleExp = 0;
-	this.Credit = 0;
-	this.PhotonSeed = 0;
-	this.FriendCoin = 0;
-	this.OddCoin = 0;
 	this.Cost = 50;
 	this.EquipSlot = 30;
 }
