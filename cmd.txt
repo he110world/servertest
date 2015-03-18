@@ -21,6 +21,7 @@ ADD_Equip,{"cmd":"ADD_Equip";"data":{"id":{0}};"session":{1}},生成随机装备
 ADD_GirlExp,{"cmd":"ADD_GirlExp";"data":{"id":{0};"count":{1}};"session":{2}},加战姬经验
 ADD_RoleExp,{"cmd":"ADD_RoleExp";"data":{"count":{0}};"session":{1}},加角色经验
 ADD_Item,{"cmd":"ADD_Item";"data":{"id":{0};"count":{1}};"session":{2}},加物品
+randombuddy,{"cmd":"randombuddy";"session":{0}},随机选择3个玩家，返回userId
 queryfriend,{"cmd":"queryfriend";"data":{"target":{0}};"session":{1}},加好友之前查看用户信息(target为用户ID，不存在的话返回db_err)
 querynick,{"cmd":"querynick";"data":{"nick":{0}};"session":{1}},加好友之前查看用户信息(nick为用户昵称，不存在的话返回db_err)
 requestfriend,{"cmd":"requestfriend";"data":{"target":{0}};"session":{1}},求加好友（target为用户ID）
@@ -44,7 +45,7 @@ buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item�
 setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
 addequipslot,{"cmd":"addequipslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
 sellequips,{"cmd":"sellequips";"data":{"indices":{0}};"session":{1}},卖装备（参数是数组）
-view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip equips girlequip allgift maps（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
+view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip girlequip allgift maps（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
 login,{"cmd":"login";"data":{"user":{0};"pass":{1}}},登录
 

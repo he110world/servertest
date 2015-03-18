@@ -427,6 +427,39 @@ wss.on('connection', function(ws) {
 			return Object.keys(obj).length === 0;
 		}
 
+		function randomBuddy (minrank, maxrank, includeSelf) {
+			var allcnt = maxrank - minrank;
+			if (!includeSelf) {
+				++allcnt;
+			}
+			if (allcnt > 3) {
+				allcnt = 3;
+			}
+			var buddyranks = [];
+			while(true) {
+				var r = Util.randomIntBetween(minrank, maxrank);
+				if (buddyranks.indexOf(r) == -1) {
+					buddyranks.push(r);
+				}
+				if (buddyranks.length >= allcnt) {
+					break;
+				}
+			}
+			var buddy = [];
+			var cnt = 0;
+			buddyranks.forEach(function(r){
+				db.zrange('rolelv', r, r, check(function(uids){
+					++cnt;
+					if (uids[0]) {
+						buddy.push(uids[0]);
+					}
+					if (cnt == allcnt) {
+						sendobj({buddy:buddy});
+					}
+				}));
+			});
+		}
+
 		var GIRL_GIFT = 14017;
 		var SAME_GIRL_GIFT = 14018;
 		function addgirl(trans, uid, girlid, price) {
@@ -1134,6 +1167,8 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'randombuddy':
+			//@cmd randombuddy
+			//@desc 随机选择3个玩家，返回userId
 			getuser(function(user, uid){
 				db.hget('role:'+uid, 'Lv', check(function(lv){
 					lv = Math.floor(lv);
@@ -1145,48 +1180,31 @@ wss.on('connection', function(ws) {
 						min = lv-10;
 						max = lv+10;
 					}
-					db.zrangebyscore('rolelv', min, min, 'limit', 0, 1, check(function(minrank){
-						db.zrangebyscore('rolelv', max, max, 'limit', 0, 1, check(function(maxrank){
-
-						}));
-					}));
-					db.zrank('rolelv', uid, check(function(rank){
-
-					}));
+					var includeSelf = lv>=min && lv<=max;
 					db.zcount('rolelv', min, max, check(function(cnt){
-						if (cnt == 0) {
+						var cnt = Math.floor(cnt);
+						if (cnt < 4) {	// self + 3 other players
 							db.zcard('rolelv', check(function(allcnt){
-								if (allcnt == 0) {
+								if (allcnt < 2) {	// only one player
 									sendobj({buddy:[]});
 								} else {
-									var buddyranks = [];
-									var loopmax = allcnt < 3 ? allcnt : 3;
-									while(true) {
-										var r = Util.randomIntBewteen(0, loopmax-1);
-										if (buddyranks.indexOf(r) == -1) {
-											buddyranks.push(r);
-										}
-										if (buddyranks.length >= loopmax) {
-											break;
-										}
-									}
-									var buddy = [];
-									var cnt = 0;
-									buddyranks.forEach(function(r){
-										db.zrange('rolelv', r, r, check(function(uids){
-											++cnt;
-											if (uids[0]) {
-												buddy.push(uids[0]);
-											}
-											if (cnt == loopmax) {
-												sendobj({buddy:buddy});
-											}
-										}));
-									});
+									randomBuddy(0, allcnt-1, true);
 								}
 							}));
 						} else {
-							
+							// find rankmin & rankmax 
+							db.zrangebyscore('rolelv', min, min, 0, 1, check(function(uids){
+								var minuid = uids[0];
+								if (!minuid) {
+									sendobj({buddy:[]});
+									return;
+								}
+
+								db.zrank('rolelv', minuid, check(function(minrank){
+									var maxrank = minrank - 1 + cnt;
+									randomBuddy(minrank, maxrank, includeSelf);
+								}));
+							}));
 						}
 					}));
 				}));
