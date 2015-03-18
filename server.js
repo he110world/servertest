@@ -440,6 +440,26 @@ wss.on('connection', function(ws) {
 			return Object.keys(obj).length === 0;
 		}
 
+		function doHandOver (handid, handpass, cb) {
+			db.hget('handover2uid', handid, check2(function(udid$uid){
+				var uu = udid$uid.split(':');
+				var oldudid = uu[0];
+				if (udid == oldudid) {
+					senderr('same_udid_err');
+					return;
+				}
+				var uid = uu[1];
+				db.hget('handover:'+uid, 'Pass', check(function(pass){
+					if (handpass != pass) {
+						senderr('pass_err');
+						return;
+					}
+
+					cb(oldudid, uid);
+				}));
+			}));
+		}
+
 		function randomBuddy (minrank, maxrank, includeSelf) {
 			var allcnt = maxrank - minrank;
 			if (!includeSelf) {
@@ -2613,6 +2633,24 @@ wss.on('connection', function(ws) {
 				}));
 			}));
 			break;
+		case 'handoverUid':
+			//@cmd handOverUDID
+			//@data handid
+			//@data handpass
+			//@nosession
+			//@desc 获取交接目标userId 返回tmp:{handto:uid}
+			try {
+				var handid = msg.data.handid;
+				var handpass = msg.data.handpass;
+			} catch (e) {
+				senderr('msg_err');
+				return;
+			}
+
+			doHandOver(handid, handpass, function(oldudid, uid) {
+				sendtemp({handto:uid});
+			});
+			break;
 		case 'handoverUDID':
 			//@cmd handOverUDID
 			//@data udid
@@ -2629,33 +2667,19 @@ wss.on('connection', function(ws) {
 				return;
 			}
 			//handid => udid
-			db.hget('handover2uid', handid, check2(function(udid$uid){
-				var uu = udid$uid.split(':');
-				var oldudid = uu[0];
-				if (udid == oldudid) {
-					senderr('same_udid_err');
-					return;
-				}
-				var uid = uu[1];
-				db.hget('handover:'+uid, 'Pass', check(function(pass){
-					if (handpass != pass) {
-						senderr('pass_err');
-						return;
-					}
-					
-					db.multi()
-					.hset('handover2uid', handid, udid+':'+uid)
-					.srem('udids', oldudid)
-					.sadd('udids', udid)
-					.set('accountid:'+udid, uid)
-					.del('accountid:'+oldudid)
-					.exec(check(function(){
-						// kick old user
-						kickall(uid);
-						sendnil();
-					}));
+			doHandOver(handid, handpass, function(oldudid, uid){
+				db.multi()
+				.hset('handover2uid', handid, udid+':'+uid)
+				.srem('udids', oldudid)
+				.sadd('udids', udid)
+				.set('accountid:'+udid, uid)
+				.del('accountid:'+oldudid)
+				.exec(check(function(){
+					// kick old user
+					kickall(uid);
+					sendnil();
 				}));
-			}));
+			});
 			break;
 		case 'setHandOverPass':
 			//@cmd setHandOverPass
