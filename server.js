@@ -36,7 +36,7 @@ var WebSocketServer = require('ws').Server;
 var wss = new WebSocketServer({port: port});
 var uid2ws = {};	// uid->ws
 var ws2uid = {};
-var appid = randomString(32);
+var appid = Util.randomString(32);
 
 function response (ws, cmd, data, id) {
 	if (ws.readyState != ws.OPEN) {
@@ -95,28 +95,13 @@ function publishData (pub, channel, data) {
 	pub.publish(channel, JSON.stringify(data));
 }
 
-function randomString(bits){
-	var chars,rand,i,ret;
-	chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-	ret='';
-	// in v8, Math.random() yields 32 pseudo-random bits (in spidermonkey it gives 53)
-	while(bits > 0){
-		rand=Math.floor(Math.random()*0x100000000); // 32-bit integer
-		// base 64 means 6 bits per character, so we use the top 30 bits from rand to give 30/6=5 characters.
-		for(i=26; i>0 && bits>0; i-=6, bits-=6) {
-			ret+=chars[0x3D & rand >>> i];
-		}
-	}
-	return ret;
-}
-
 function HandOver () {
-	  this.ID = randomString(32);
+	  this.ID = Util.randomString(32);
 	  this.Pass = '';
 }
 
 function generateSession (cb) {
-	var session = randomString(32);
+	var session = Util.randomString(32);
 	cb(session);
 }
 
@@ -294,6 +279,7 @@ function kickall (uid) {
 }
 
 var MAX_ROOM_SIZE = 4;
+var REDEEM_GIFT_ID = 14017;
 
 wss.on('connection', function(ws) {
 	ws.on('open', function() {
@@ -1866,6 +1852,46 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
+		case 'redeem':
+			//@cmd redeem
+			//@data code
+			//@desc 兑换码
+			getuser(function(user, uid){
+				try {
+					var code = msg.data.code;
+				} catch (e) {
+					senderr('msg_err');
+					return;
+				}
+
+				//who's the owner?
+				db.hget('redeemowner', code, check(function(ownerUid){
+					if (!ownerUid || ownerUid==uid) {
+						senderr('invalid_code_err');
+						return;
+					}
+
+					//code:user
+					db.sadd('redeem', code+':'+uid, check2(function(){
+						// user gift
+						db.incr('next_gift_id:'+uid, check(function(useridx){
+							var trans = new Transaction(db, uid);
+							trans.hsetjson('gift', useridx, new Gift(REDEEM_GIFT_ID), check(function(){
+								sendobj(trans.obj);
+
+								// owner gift
+								db.incr('next_gift_id:'+ownerUid, check(function(owneridx){
+									var trans2 = new Transaction(db, ownerUid);
+									trans2.hsetjson('gift', owneridx, new Gift(REDEEM_GIFT_ID), check(function(){
+										notifymsg(ownerUid, {cmd:'view', data:trans2.obj});
+									}));
+								}));
+							}));
+						}));
+					}));
+				}));
+			});
+			break;
 		case 'getactiveitem':
 			//@cmd getactiveitem
 			//@desc 获取当前正在使用的道具{ID:id Timeout:ms}
@@ -2596,21 +2622,20 @@ wss.on('connection', function(ws) {
 			}
 			db.sadd('udids', user, check2err('udid_exist',function(){
 				db.incr('next_account_id', check(function(uid){
-					db.set('accountid:'+user, uid, check2(function(){
-						// create role
-						var newRole = new Role();
-						newRole.newRole(uid);
-						var handover = new HandOver();
-						db.hmset('role:'+uid, newRole, check(function(){
-							db.hmset('handover:'+uid, handover, check(function(){
-								//handoverID:udid$uid
-								db.hset('handover2uid', handover.ID, udid+'$'+uid, check(function(){
-									// add to level:1 set
-									db.zadd('rolelv', 1, uid);
-									sendnil();
-								}));
-							}));
-						}));
+					// create role
+					var newRole = new Role();
+					newRole.newRole(uid);
+					var handover = new HandOver();
+
+					db.multi()
+					.set('accountid:'+user, uid)
+					.hmset('role:'+uid, newRole)
+					.hmset('handover:'+uid, handover)
+					.hset('handover2uid', handover.ID, udid+'$'+uid)	//handoverID:udid$uid
+					.hset('redeemowner', newRole.Redeem, uid)			//redeem info
+					.zadd('rolelv', 1, uid)		// add to level:1 set
+					.exec(check(function(){
+						sendnil();
 					}));
 				}));
 			}));
@@ -2770,9 +2795,11 @@ wss.on('connection', function(ws) {
 							// create role
 							var newRole = new Role();
 							newRole.newRole(uid);
-							db.hmset('role:'+uid, newRole, check(function(){
-								// add to level:1 set
-								db.zadd('rolelv', 1, uid);
+							db.multi()
+							.hmset('role:'+uid, newRole)
+							.hset('redeemowner', newRole.Redeem, uid)
+							.zadd('rolelv', 1, uid)	// add to level:1 set
+							.exec(check(function(){
 								sendnil();
 							}));
 						}));
