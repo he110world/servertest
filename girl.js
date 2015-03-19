@@ -19,6 +19,20 @@ Girl.prototype.newGirl = function (table, id) {
 	this.Birth = Date.now();
 }
 
+//TODO: precompute this!
+Girl.prototype.fourStars = function (table) {
+	var girls = [];
+	for (var i in table.girl) {
+		var g = table.girl[i];
+		var r = g.Rare;
+		if (g.Capsule > 0 && r == 4) {
+			girls.push(g);
+		}
+	}
+	var girl = girls[Math.floor(Math.random()*girls.length)];
+	return girl.ID;
+}
+
 Girl.prototype.buyGirl = function (table, itemcounts) {
 	var odds = [20, 20, 20, 20, 20];
 	for (var id in itemcounts) {
@@ -64,12 +78,13 @@ Girl.prototype.buyGirl = function (table, itemcounts) {
 	// find all suitable girls 
 	var raregirls = [];
 	var matchgirls = [];
-	for (var g in table.girl) {
-		var r = table.girl[g].Rare;
-		if (r == rare) {
-			raregirls.push(table.girl[g]);
-			if (wx == table.girl[g].Wuxing) {
-				matchgirls.push(table.girl[g]);
+	for (var i in table.girl) {
+		var g = table.girl[i];
+		var r = g.Rare;
+		if (g.Capsule > 0 && r == rare) {
+			raregirls.push(g);
+			if (wx == g.Wuxing) {
+				matchgirls.push(g);
 			}
 		}
 	}

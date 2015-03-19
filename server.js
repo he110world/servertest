@@ -498,9 +498,14 @@ wss.on('connection', function(ws) {
 		var SAME_GIRL_GIFT = 14018;
 		var MAX_FRIENDS = 50;
 		function addgirl(trans, uid, girlid, price) {
+			// invalid girl
+			if (!table.girl[girlid]) {
+				sendobj(trans.obj);
+				return;
+			}
+
 			// already exist?
 			db.sismember('girls:'+uid, girlid, check(function(exist){
-				var ODD_COIN = 1000;
 				if (exist) {
 					db.incrby('next_gift_id:'+uid, 2, check2(function(index){	// two gifts for existing girl
 						var rare = Math.floor(table.girl[girlid].Rare);
@@ -1828,24 +1833,31 @@ wss.on('connection', function(ws) {
 								senderr('data_err1');
 							}
 							break;
-						case 2:	//multiply
+						case 2:	
 							var trans = new Transaction(db, uid);
-							var iteminfo = {ID: itemid, Begin:Date.now()};
-							var timeout = table.item[itemid].EffectValue;
 							var multi = trans.multi();
 							if (count > 1) {
 								multi.hincrby('item', itemid, -1);
 							} else {
 								multi.hdel('item', itemid);
 							}
-							multi
-							.hmset('activeitem', iteminfo)
-							.expire('activeitem', timeout)
-							.exec(checklist(3,function(res){
-								// set timeout for client use
-								trans.client().hmset('activeitem', {ID: itemid, Timeout: timeout * 1000});
-								sendobj(trans.obj);
-							}));
+
+							if (item.Effect == 10) {	// double crystal
+								var iteminfo = {ID: itemid, Begin:Date.now()};
+								var timeout = item.EffectValue;
+								multi
+								.hmset('activeitem', iteminfo)
+								.expire('activeitem', timeout)
+								.exec(checklist(3,function(res){
+									// set timeout for client use
+									trans.client().hmset('activeitem', {ID: itemid, Timeout: timeout * 1000});
+									sendobj(trans.obj);
+								}));
+							} else if (item.Effect == 11) {	// 4 star girl
+								// addgirl
+								var girl = new Girl();
+								addgirl(trans, uid, girl.fourStars(table));
+							}
 							break;
 						case 3:	//wuxing
 							senderr('cannot_use_item_err');
