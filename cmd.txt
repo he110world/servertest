@@ -34,6 +34,7 @@ frienddetail,{"cmd":"frienddetail";"data":{"target":{0}};"session":{1}},好友�
 usegift,{"cmd":"usegift";"data":{"index":{0}};"session":{1}},领取礼包
 useallgifts,{"cmd":"useallgifts";"session":{0}},领取全部礼包
 useitem,{"cmd":"useitem";"data":{"itemid":{0};"targetid":{1}};"session":{2}},使用物品(targetid可以是girl的id之类的值)
+redeem,{"cmd":"redeem";"data":{"code":{0}};"session":{1}},兑换码
 getactiveitem,{"cmd":"getactiveitem";"session":{0}},获取当前正在使用的道具{ID:id Timeout:ms}
 sellitem,{"cmd":"sellitem";"data":{"itemid":{0};"count":{1}};"session":{2}},卖道具
 buyitem,{"cmd":"buyitem";"data":{"shopid":{0}};"session":{1}},买物品
@@ -44,10 +45,11 @@ finishmap,{"cmd":"finishmap";"data":{"mapid":{0};"rank":{1}};"session":{2}},地�
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
 setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
 addequipslot,{"cmd":"addequipslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
-sellequips,{"cmd":"sellequips";"data":{"indices":{0}};"session":{1}},卖装备（参数是数组）
+logingift,{"cmd":"logingift";"session":{0}},尝试领取登录奖励
 view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip girlequip allgift maps（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 regUDID,{"cmd":"regUDID";"data":{"udid":{0}}},注册用户
 loginUDID,{"cmd":"loginUDID";"data":{"udid":{0}}},登录
+handOverUDID,{"cmd":"handOverUDID";"data":{"handid":{0};"handpass":{1}}},获取交接目标userId 返回tmp:{handto:uid}
 handOverUDID,{"cmd":"handOverUDID";"data":{"udid":{0};"handid":{1};"handpass":{2}}},账户交接
 setHandOverPass,{"cmd":"setHandOverPass";"data":{"pass":{0}};"session":{1}},设置交接账户密码
 reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
