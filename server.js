@@ -24,6 +24,7 @@ var Girl = require('./girl');
 var Equip = require('./equip');
 var Gift = require('./gift');
 var Util = require('./util');
+var moment = require('moment');
 var GIRL_PRICE = 100;
 
 // kpi
@@ -2061,7 +2062,7 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'addequipslot':
+		case 'addslot':
 			//@cmd addslot
 			//@data cnt
 			//@desc 增加装备格子
@@ -2383,12 +2384,44 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'sellequips':
-			//@cmd sellequips
-			//@data indices
-			//@desc 卖装备（参数是数组）
-			getuser(function(user,uid){
-				var indices = msg.data.indices;	//TODO check indices
+		case 'logingift':
+			//@cmd logingift
+			//@desc 尝试领取登录奖励
+			getuser(function(user, uid){
+				//we need: 1. last login date 2. last gift id
+				db.hget('role:'+uid, 'LastGift', check(function(data){
+					// data: date$id
+					var nowdate = moment(Date.now()).format('YYYYMMDD');
+					var lastgift;
+					if (!data) {	// first time
+						lastgift = 14000;
+					} else {
+						data = data.split('$');
+						var lastdate = data[0];
+
+						// already logged in
+						if (lastdate == nowdate) {
+							sendnil();
+							return;
+						}
+
+						lastgift = Math.floor(data[1]);
+					}
+
+					var gift = Math.floor(lastgift) + 1;
+					if (gift > 14016) {
+						gift = 14009;
+					}
+					db.incr('next_gift_id:'+uid, check2(function(index){
+						var trans = new Transaction(db, uid);
+						trans.multi()
+						.hsetjson('gift', index, new Gift(gift))
+						.hset('role', 'LastGift', nowdate+'$'+gift)
+						.exec(check(function(){
+							sendobj(trans.obj);
+						}));
+					}));
+				}));
 			});
 			break;
 		case 'view':
