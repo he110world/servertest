@@ -23,9 +23,9 @@ var Role = require('./role');
 var Girl = require('./girl');
 var Equip = require('./equip');
 var Gift = require('./gift');
+var Const = require('./const');
 var Util = require('./util');
 var moment = require('moment');
-var GIRL_PRICE = 100;
 
 // kpi
 var kpi = require('./kpilog');
@@ -278,9 +278,6 @@ function kickall (uid) {
 	publishData(pub, 'user', {cmd:'kickall', uid:uid});
 }
 
-var MAX_ROOM_SIZE = 4;
-var REDEEM_GIFT_ID = 14017;
-
 wss.on('connection', function(ws) {
 	ws.on('open', function() {
 	});
@@ -480,9 +477,6 @@ wss.on('connection', function(ws) {
 			});
 		}
 
-		var GIRL_GIFT = 14017;
-		var SAME_GIRL_GIFT = 14018;
-		var MAX_FRIENDS = 50;
 		function addgirl(trans, uid, girlid, price) {
 			// invalid girl
 			if (!table.girl[girlid]) {
@@ -495,14 +489,20 @@ wss.on('connection', function(ws) {
 				if (exist) {
 					db.incrby('next_gift_id:'+uid, 2, check2(function(index){	// two gifts for existing girl
 						var rare = Math.floor(table.girl[girlid].Rare);
+						var samegiftid = Const.SAME_GIRL_GIFT(rare);
 						var multi = trans.multi();
 						if (price > 0) {	// buy
+							var buygift = new Gift(Const.BUY_GIRL_GIFT);
+
 							multi
-							.hincrby('item', 12001, -price)
-							.hsetjson('gift', index-1, new Gift(GIRL_GIFT))	//TODO: real gift
+							.hincrby('item', Const.PHOTON_ID, -price)
+							.hsetjson('gift', index-1, buygift);	//TODO: real gift
+
 						}
-						multi.hsetjson('gift', index, new Gift(SAME_GIRL_GIFT))	// already own this girl
-						.exec(check(function(res){	// add medal
+						if (samegiftid) {
+							multi.hsetjson('gift', index, new Gift(samegiftid));	// already own this girl
+						}
+						multi.exec(check(function(res){	// add medal
 							trans.client().set('buygirl', [girlid]);
 							sendobj(trans.obj);
 						}));
@@ -513,9 +513,11 @@ wss.on('connection', function(ws) {
 						girl.newGirl(table, girlid);
 						var multi = trans.multi()
 						if (price > 0) {	// buy
+							var buygift = new Gift(Const.BUY_GIRL_GIFT);
+
 							multi
-							.hincrby('item', 12001, -price)
-							.hsetjson('gift', index, new Gift(GIRL_GIFT))	//TODO: real gift
+							.hincrby('item', Const.PHOTON_ID, -price)
+							.hsetjson('gift', index, buygift)	//TODO: real gift
 						}
 						multi
 						.sadd('girls', girlid)
@@ -658,7 +660,7 @@ wss.on('connection', function(ws) {
 			});
 		}
 
-		function getboardgift (board, max) {
+		function getboardgift (board) {
 			getuser(function(user,uid){
 				// already get the gift?
 				db.getbit(board+'_gift', uid, check(function(got){
@@ -667,23 +669,23 @@ wss.on('connection', function(ws) {
 					} else {
 						// on last leaderboard?
 						db.zrevrank(board+'_last', uid, check(function(rank){
-							var oldrank = rank;
-							if (rank===null || rank>max) {
-								rank = max+1;
-							}
-
+							// set state to 'checked'
 							db.setbit(board+'_gift', uid, 1, check(function(){
-								if (rank > max) {
+								var giftid;
+								if (board == 'score') {
+									giftid = Const.SCORE_GIFT(rank);
+								} else if (board == 'contrib') {
+									giftid = Const.CONTRIB_GIFT(rank);
+								}
+								if (!giftid) {
 									sendnil();
 									return;
 								}
 
-								var giftid = 14001;	//TODO: real gift
-
 								db.incr('next_gift_id:'+uid, check2(function(index){	// two gifts for existing girl
 									var trans = new Transaction(db, uid);
 									trans.multi()
-									.hset('role', 'OldRank', oldrank)
+									.hset('role', 'OldRank', rank)
 									.hsetjson('gift', index, new Gift(giftid))
 									.exec(check(function(){
 										sendobj(trans.obj);
@@ -1291,7 +1293,7 @@ wss.on('connection', function(ws) {
 						return;
 					}
 					db.scard('friends:'+target, check(function(cnt){
-						if (cnt >= MAX_FRIENDS) {
+						if (cnt >= Const.MAX_FRIENDS) {
 							senderr('friend_full_err');
 						} else {
 							db.sadd('pendingfriends:'+target, uid, check(function(){
@@ -1359,7 +1361,7 @@ wss.on('connection', function(ws) {
 					senderr('data_err:target');
 				}
 				db.scard('friends:'+target, check(function(cnt){
-					if (cnt >= MAX_FRIENDS) {
+					if (cnt >= Const.MAX_FRIENDS) {
 						senderr('friend_full_err');
 					} else {
 						db.multi()
@@ -1590,9 +1592,8 @@ wss.on('connection', function(ws) {
 								girlmap[id] = girlmap[id] || 0;
 								++girlmap[id];
 
-								// gift items => used for redis query
-								itemmap[12003] = 1;	//TODO
-								itemmap[12004] = 1;
+								var rare = table.girl[id].Rare;
+								itemmap[Const.SAME_GIRL_ITEM(rare)] = 1;
 
 								delgifts.push(index);	// girl gift can always be used
 							} else {	// store parsed gifts for later use
@@ -1610,6 +1611,7 @@ wss.on('connection', function(ws) {
 						if (empty(girlmap)) {
 							useallgifts();
 						} else {
+							// has girl
 							db.smembers('girls:'+uid, check(function(girls){
 								for (var girlid in girlmap) {
 									var ismember = girls.indexOf(girlid) != -1;
@@ -1617,7 +1619,7 @@ wss.on('connection', function(ws) {
 										addedgirls.push(girlid);
 
 										++next_gift_id;
-										var gift = new Gift(GIRL_GIFT);
+										var gift = new Gift(Const.BUY_GIRL_GIFT);
 										giftres[next_gift_id] = gift.usesync(table);
 										addedgifts[next_gift_id] = gift;
 									}
@@ -1626,11 +1628,15 @@ wss.on('connection', function(ws) {
 										if (ismember) {
 											++count;
 										}
-										for (var i=0; i<count; i++) {
-											var gift = new Gift(SAME_GIRL_GIFT);
-											++next_gift_id;
-											giftres[next_gift_id] = gift.usesync(table);
-											addedgifts[next_gift_id] = gift;
+										var rare = table.girl[girlid].Rare;
+										var sameid = Const.SAME_GIRL_GIFT(rare);
+										if (sameid) {
+											for (var i=0; i<count; i++) {
+												var gift = new Gift(sameid);
+												++next_gift_id;
+												giftres[next_gift_id] = gift.usesync(table);
+												addedgifts[next_gift_id] = gift;
+											}
 										}
 									}
 								}
@@ -1876,13 +1882,13 @@ wss.on('connection', function(ws) {
 						// user gift
 						db.incr('next_gift_id:'+uid, check(function(useridx){
 							var trans = new Transaction(db, uid);
-							trans.hsetjson('gift', useridx, new Gift(REDEEM_GIFT_ID), check(function(){
+							trans.hsetjson('gift', useridx, new Gift(Const.REDEEM_USER_GIFT), check(function(){
 								sendobj(trans.obj);
 
 								// owner gift
 								db.incr('next_gift_id:'+ownerUid, check(function(owneridx){
 									var trans2 = new Transaction(db, ownerUid);
-									trans2.hsetjson('gift', owneridx, new Gift(REDEEM_GIFT_ID), check(function(){
+									trans2.hsetjson('gift', owneridx, new Gift(REDEEM_OWNER_GIFT), check(function(){
 										notifymsg(ownerUid, {cmd:'view', data:trans2.obj});
 									}));
 								}));
@@ -2112,8 +2118,8 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				var cost = cnt * 100;
-				db.hget('item:'+uid, 12001, check(function(photon){
+				var cost = cnt * Const.SLOT_PRICE;
+				db.hget('item:'+uid, Const.PHOTON_ID, check(function(photon){
 					if (photon < cost) {
 						senderr('not_enough_12001_err');
 						return;
@@ -2132,7 +2138,7 @@ wss.on('connection', function(ws) {
 						var trans = new Transaction(db, uid);
 						trans
 						.multi()
-						.hincrby('item', 12001, -cost)
+						.hincrby('item', Const.PHOTON_ID, -cost)
 						.hset('role', 'EquipSlot', newcnt)
 						.exec(check(function(){
 							sendobj(trans.obj);
@@ -2184,8 +2190,8 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				// cost
 				var mod = {};
-				db.hget('item:'+uid, 12001, check(function(photon){
-					if (photon < GIRL_PRICE) {
+				db.hget('item:'+uid, Const.PHOTON_ID, check(function(photon){
+					if (photon < Const.GIRL_PRICE) {
 						senderr('not_enough_item_err');
 					} else {
 						// used items
@@ -2221,7 +2227,7 @@ wss.on('connection', function(ws) {
 
 								trans.hmset('item', itemcounts, check(function(){
 									try {
-										addgirl(trans, uid, buygirl(), GIRL_PRICE);
+										addgirl(trans, uid, buygirl(), Const.GIRL_PRICE);
 									} catch (e) {
 										senderr('buygirl_err');
 									}
@@ -2229,7 +2235,7 @@ wss.on('connection', function(ws) {
 							}));
 						} else {
 							try {
-								addgirl(trans, uid, buygirl(), GIRL_PRICE);
+								addgirl(trans, uid, buygirl(), Const.GIRL_PRICE);
 							} catch (e) {
 								senderr('buygirl_err');
 							}
@@ -2396,7 +2402,7 @@ wss.on('connection', function(ws) {
 				var maxSlots = 400;
 
 				// cost photon seed
-				db.hget('item:'+uid, 12001, check(function(photon){
+				db.hget('item:'+uid, Const.PHOTON_ID, check(function(photon){
 					var totalcost = cnt*cost;
 					if (totalcost > photon) {
 						senderr('not_enogh_12001_err');
@@ -2413,7 +2419,7 @@ wss.on('connection', function(ws) {
 						trans
 						.multi()
 						.hincrby('role', 'EquipSlot', cnt)
-						.hincrby('item', 12001, -totalcost)
+						.hincrby('item', Const.PHOTON_ID, -totalcost)
 						.exec(checklist(2,function(){
 							sendobj(trans.obj);
 						}));
@@ -2426,29 +2432,11 @@ wss.on('connection', function(ws) {
 			//@cmd logingift
 			//@desc 尝试领取登录奖励
 			getuser(function(user, uid){
-				//we need: 1. last login date 2. last gift id
-				db.hget('role:'+uid, 'LastGift', check(function(data){
-					// data: date$id
-					var nowdate = moment(Date.now()).format('YYYYMMDD');
-					var lastgift;
-					if (!data) {	// first time
-						lastgift = 14000;
-					} else {
-						data = data.split('$');
-						var lastdate = data[0];
-
-						// already logged in
-						if (lastdate == nowdate) {
-							sendnil();
-							return;
-						}
-
-						lastgift = Math.floor(data[1]);
-					}
-
-					var gift = Math.floor(lastgift) + 1;
-					if (gift > 14016) {
-						gift = 14009;
+				db.hget('role:'+uid, 'LastGift', check(function(date$id){
+					var gift = Const.LOGIN_GIFT(date$id);
+					if (!gift) {	// no gift
+						sendnil();
+						return;
 					}
 					db.incr('next_gift_id:'+uid, check2(function(index){
 						var trans = new Transaction(db, uid);
@@ -2703,8 +2691,8 @@ wss.on('connection', function(ws) {
 				}));
 			}));
 			break;
-		case 'handoverUid':
-			//@cmd handOverUDID
+		case 'getHandoverUid':
+			//@cmd getHandOverUid
 			//@data handid
 			//@data handpass
 			//@nosession
