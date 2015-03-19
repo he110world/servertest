@@ -49,7 +49,7 @@ logingift,{"cmd":"logingift";"session":{0}},尝试领取登录奖励
 view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip girlequip allgift maps（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 regUDID,{"cmd":"regUDID";"data":{"udid":{0}}},注册用户
 loginUDID,{"cmd":"loginUDID";"data":{"udid":{0}}},登录
-handOverUDID,{"cmd":"handOverUDID";"data":{"handid":{0};"handpass":{1}}},获取交接目标userId 返回tmp:{handto:uid}
+getHandOverUid,{"cmd":"getHandOverUid";"data":{"handid":{0};"handpass":{1}}},获取交接目标userId 返回tmp:{handto:uid}
 handOverUDID,{"cmd":"handOverUDID";"data":{"udid":{0};"handid":{1};"handpass":{2}}},账户交接
 setHandOverPass,{"cmd":"setHandOverPass";"data":{"pass":{0}};"session":{1}},设置交接账户密码
 reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
