@@ -8,9 +8,13 @@ function Const () {
 	this.REDEEM_OWNER_GIFT = 14053;
 	this.BETA_TESTER_GIFT = 14054;
 	this.PHOTON_ID = 12001;
+	this.CREDIT_ID = 12000;
 	this.GIRL_PRICE = 10;
 	this.SLOT_PRICE = 10;
+	this.MAX_SLOT = 400;
 	this.MAX_FRIENDS = 50;
+	this.MISSION_RESET_HOUR = 5;
+	this.MISSION_ID_OFFSET = 15000;
 }
 
 //we need: 1. last login date 2. last gift id

@@ -228,6 +228,23 @@ Transaction.prototype.hincrby = function (key, hkey, incr, cb) {
 	}
 }
 
+Transaction.prototype.zincrby = function (key, incr, member, cb) {
+	if (this.mul) {
+		this.mul.zincrby(key, incr, member);
+		this.addkey(key,member);
+		return this;
+	} else {
+		var self = this;
+		this.db.zincrby(key, incr, member, function(err,newval){
+			merge(self.obj, key, newval);
+			if (typeof cb == 'function') {
+				cb(err,newval);
+			}
+		});
+	}
+}
+
+
 Transaction.prototype.hmset = function (key, mobj, cb) {
 	var fullkey = key+':'+this.uid;
 	merge(this.obj, key, mobj); // don't wait for result : it's already known
@@ -270,11 +287,52 @@ Transaction.prototype.hmsetjson = function (key, mobj, cb) {
 					cb(err,newval);
 				}
 			});
+		}d
+	}
+}
+
+Transaction.prototype.srem = function (key, rem, cb) {
+	if (this.serv) {
+		this.serv = false;
+	} else {
+		var mobj = {};
+		if (typeof rem == 'object') {	// array
+			for (var i in rem) {
+				mobj[rem[i]] = null;
+			}
+		} else {
+			mobj[rem] = null;
 		}
+		merge(this.obj, key, mobj);
+	}
+
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.srem(fullkey, rem);
+		this.skipkey();
+		return this;
+	} else {
+		this.db.srem(fullkey, rem, function(err,count){
+			cb(err,count);
+		});
 	}
 }
 
 Transaction.prototype.sadd = function (key, add, cb) {
+	if (this.serv) {
+		this.serv = false;
+	} else {
+		var mobj = {};
+		if (typeof add == 'object') {	// array
+			for (var i in add) {
+				mobj[add[i]] = 1;
+			}
+		} else {	// single value
+			mobj[add] = 1;
+		}
+		merge(this.obj, key, mobj);
+	}
+
 	var fullkey = key+':'+this.uid;
 	if (this.mul) {
 		this.mul.sadd(fullkey, add);

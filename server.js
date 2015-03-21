@@ -96,8 +96,8 @@ function publishData (pub, channel, data) {
 }
 
 function HandOver () {
-	  this.ID = Util.randomString(32);
-	  this.Pass = '';
+	this.ID = Util.randomString(32);
+	this.Pass = '';
 }
 
 function generateSession (cb) {
@@ -420,8 +420,39 @@ wss.on('connection', function(ws) {
 			response(ws, msg.cmd, '', msg.id);
 		}
 
+		function sendto (target, data) {
+			notifymsg(target, {cmd:'view', data:data});
+		}
+
 		function empty(obj) {
 			return Object.keys(obj).length === 0;
+		}
+
+		function getRanks (trans, uid, cb) {
+			db.zrevrank('score', uid, check(function(scorerank){
+				db.zrevrank('contrib', uid, check(function(contribrank){
+					trans.client().set('ScoreRank', scorerank);
+					trans.client().set('ContribRank', contribrank);
+					cb();
+				}));
+			}));
+		}
+
+		function getGrade (mapid, score) {
+			var map = table.map[mapid];
+			var mapscore = map.Score || 1;
+			var k = score / mapscore;
+			if (k > 2) {
+				return 1;
+			} else if (k > 1.5) {
+				return 2;
+			} else if (k > 1) {
+				return 3;
+			} else if (k > 0.5) {
+				return 4;
+			} else {
+				return 5;
+			}
 		}
 
 		function doHandOver (handid, handpass, cb) {
@@ -477,6 +508,49 @@ wss.on('connection', function(ws) {
 			});
 		}
 
+		function addRoleExp(trans, uid, expinc, cb) {
+			var query = ['Lv', 'RoleExp'];
+			db.hmget('role:'+uid, query, checklist(2,function(data){
+				var role = new Role(table);
+				var oldLv = data[0];
+				role.Lv = oldLv;
+				role.RoleExp = data[1];
+				try {
+					var mod = role.addExp(expinc);
+					trans.hmset('role', mod, check(function(){
+						cb();
+						if (mod.Lv) {
+							// update Lv (score)
+							db.zadd('rolelv', mod.Lv, uid);
+							kpi.levelUp(uid, mod.Lv);
+						}
+					}));
+				} catch (e) {
+					senderr('role_err');
+				}
+			}));
+		}
+
+		function addGirlExp(trans, uid, girlid, expinc, cb) {
+			var query = ['Lv', 'GirlExp', 'Rank'];
+			var girlkey = 'girl.'+girlid+':'+uid;
+			db.hmget(girlkey, query, checklist(3,function(data){
+				var girl = new Girl(table);
+				girl.Lv = data[0];
+				girl.GirlExp = data[1];
+				girl.Rank = data[2];
+				try {
+					//var mod = Girl.addExp(
+					var mod = girl.addExp(expinc);
+					trans.hmset('girl.'+girlid, mod, check(function(){
+						cb();
+					}));
+				} catch (e) {
+					senderr('girl_err');
+				}
+			}));
+		}
+
 		function addgirl(trans, uid, girlid, price) {
 			// invalid girl
 			if (!table.girl[girlid]) {
@@ -496,8 +570,7 @@ wss.on('connection', function(ws) {
 
 							multi
 							.hincrby('item', Const.PHOTON_ID, -price)
-							.hsetjson('gift', index-1, buygift);	//TODO: real gift
-
+							.hsetjson('gift', index-1, buygift);
 						}
 						if (samegiftid) {
 							multi.hsetjson('gift', index, new Gift(samegiftid));	// already own this girl
@@ -509,6 +582,7 @@ wss.on('connection', function(ws) {
 					}));
 				} else {
 					db.incr('next_gift_id:'+uid, check2(function(index){
+//						var girl = Girl.newGirl(table, girlid);
 						var girl = new Girl;
 						girl.newGirl(table, girlid);
 						var multi = trans.multi()
@@ -517,12 +591,11 @@ wss.on('connection', function(ws) {
 
 							multi
 							.hincrby('item', Const.PHOTON_ID, -price)
-							.hsetjson('gift', index, buygift)	//TODO: real gift
+							.hsetjson('gift', index, buygift);
 						}
 						multi
 						.sadd('girls', girlid)
 						.hmset('girl.'+girlid, girl)
-						.smembers('girls')
 						.exec(check(function(res){
 							sendobj(trans.obj);
 						}));
@@ -849,18 +922,10 @@ wss.on('connection', function(ws) {
 			//@cmd get_ranks
 			//@desc 获取自己的积分和贡献度排名: ScoreRank 和 ContribRank
 			getuser(function(user, uid){
-				db.zrevrank('score', uid, check(function(scorerank){
-					db.zrevrank('contrib', uid, check(function(contribrank){
-						var obj = {};
-						if (scorerank) {
-							obj.ScoreRank = scorerank;
-						}
-						if (contribrank) {
-							obj.ContribRank = contribrank;
-						}
-						sendobj(obj);
-					}));
-				}));
+				var trans = new Transaction(db, uid);
+				getRanks(trans, uid, function(){
+					sendobj(trans.obj);
+				});
 			});
 			break;
 		case 'setroomteam':
@@ -1016,7 +1081,6 @@ wss.on('connection', function(ws) {
 					sendnil();
 				});
 			});
-
 			break;
 		case 'roomchat':
 			//@cmd roomchat
@@ -1079,7 +1143,6 @@ wss.on('connection', function(ws) {
 					trans
 					.multi()
 					.hsetjson('equip', index, equip)
-//					.hset('girlequip', index, 0)
 					.exec(check(function(){
 						sendobj(trans.obj);
 					}));
@@ -1097,35 +1160,14 @@ wss.on('connection', function(ws) {
 				if (isNaN(expinc)) {
 					throw new Error('data_err'); 
 				}
-				getuser(function(user, uid){
-					var query = ['Lv', 'GirlExp', 'Rank'];
-					var girlkey = 'girl.'+girlid+':'+uid;
-					db.hmget(girlkey, query, check2(function(data){
-						if (data.length != query.length) {
-							senderr('data_err');
-						} else {
-							var girl = new Girl(table);
-							girl.Lv = data[0];
-							girl.GirlExp = data[1];
-							girl.Rank = data[2];
-							try {
-								var mod = girl.addExp(expinc);
-								var trans = new Transaction(db, uid);
-								trans.hmset('girl.'+girlid, mod, check(function(){
-									sendobj(trans.obj);
-								}));
-							} catch (e) {
-								senderr('girl_err');
-							}
-						}
-					}));
-				});
 			} catch (e) {
-				senderr('data_err:id,count');
-				console.log(e);
-				return;
 			}
-
+			getuser(function(user, uid){
+				var trans = new Transaction(db, uid);
+				addGirlExp(trans, uid, girlid, expinc, function(){
+					sendobj(trans.obj);
+				});
+			});
 			break;
 		case 'ADD_RoleExp':
 			//@cmd ADD_RoleExp
@@ -1144,32 +1186,10 @@ wss.on('connection', function(ws) {
 				
 			getuser(function(user, uid){
 				//we need Lv & RoleExp
-				var query = ['Lv', 'RoleExp'];
 				var trans = new Transaction(db, uid);
-				db.hmget('role:'+uid, query, check2(function(data){
-					if (data.length < query.length) {
-						senderr('data_err');
-					} else {
-						var role = new Role(table);
-						var oldLv = data[0];
-						role.Lv = oldLv;
-						role.RoleExp = data[1];
-						try {
-							var mod = role.addExp(expinc);
-							trans.hmset('role', mod, check(function(){
-								sendobj(trans.obj);
-
-								if (mod.Lv) {
-									// update Lv (score)
-									db.zadd('rolelv', mod.Lv, uid);
-									kpi.levelUp(uid, mod.Lv);
-								}
-							}));
-						} catch (e) {
-							senderr('role_err');
-						}
-					}
-				}));
+				addRoleExp(trans, uid, expinc, function(){
+					sendobj(trans.obj);
+				});
 			});
 			break;
 		case 'ADD_Item':
@@ -1296,12 +1316,10 @@ wss.on('connection', function(ws) {
 						if (cnt >= Const.MAX_FRIENDS) {
 							senderr('friend_full_err');
 						} else {
-							db.sadd('pendingfriends:'+target, uid, check(function(){
+							var trans = new Transaction(db, target);
+							trans.sadd('pendingfriends', uid, check(function(){
 								sendnil();
-								var data = {};
-								data.pendingfriends = {};
-								data.pendingfriends[uid] = 1;
-								notifymsg(target, {cmd:'view', data:data});
+								sendto(target, trans.obj);
 							}));
 						}
 					}));
@@ -1324,25 +1342,25 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.multi()
-					.srem('friends:'+uid, target)
-					.srem('friends:'+target, uid)
-					.srem('follows:'+uid, target)
-					.srem('follows:'+target, uid)
-					.exec(checklist(4,function(){
-						var userdata = {};
-						userdata.friends = {};
-						userdata.friends[target] = null;
-						sendobj(userdata);
-
-						var targetdata = {};
-						targetdata.friends = {};
-						targetdata.friends[uid] = null;
-						notifymsg(target, {cmd:'view', data:targetdata});
-					}));
 				} catch (e) {
 					senderr('data_err:target');
+					return;
 				}
+				var trans1 = new Transaction(db, uid);
+				trans1.multi()
+				.srem('friends', target)
+				.srem('follows', target)
+				.exec(checklist(2,function(){
+					sendobj(trans1.obj);
+
+					var trans2 = new Transaction(db, target);
+					trans2.multi()
+					.srem('friends', uid)
+					.srem('follows', uid)
+					.exec(checklist(2,function(){
+						sendto(target, trans2.obj);
+					}));
+				}));
 			});
 			break;
 		case 'acceptfriend':
@@ -1359,27 +1377,23 @@ wss.on('connection', function(ws) {
 					var target = msg.data.target;
 				} catch (e) {
 					senderr('data_err:target');
+					return;
 				}
 				db.scard('friends:'+target, check(function(cnt){
 					if (cnt >= Const.MAX_FRIENDS) {
 						senderr('friend_full_err');
 					} else {
-						db.multi()
-						.srem('pendingfriends:'+uid, target)
-						.sadd('friends:'+uid, target)
-						.sadd('friends:'+target, uid)
-						.exec(checklist(3,function(){
-							var userdata = {};
-							userdata.pendingfriends = {};
-							userdata.pendingfriends[target] = null;
-							userdata.friends = {};
-							userdata.friends[target] = 1;
-							sendobj(userdata);
+						var trans1 = new Transaction(db, uid);
+						trans1.multi()
+						.srem('pendingfriends', target)
+						.sadd('friends', target)
+						.exec(check(function(){
+							sendobj(trans1.obj);
 
-							var targetdata = {};
-							targetdata.friends = {};
-							targetdata.friends[uid] = 1;
-							notifymsg(target, {cmd:'view', data:targetdata});
+							var trans2 = new Transaction(db, target);
+							trans2.sadd('friends', uid, check(function(){
+								sendto(target, trans2.obj);
+							}));
 						}));
 					}
 				}));
@@ -1394,15 +1408,15 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var target = msg.data.target;
-					db.srem('pendingfriends:'+uid, target, check2(function(){
-						var userdata = {};
-						userdata.pendingfriends = {};
-						userdata.pendingfriends[target] = null;
-						sendobj(userdata);
-					}));
 				} catch (e) {
 					senderr('data_err,target');
+					return;
 				}
+				var trans = new Transaction(db, uid);
+				trans.srem('pendingfriends', target, check2(function(){
+					sendobj(trans.obj);
+				}));
+
 			});
 			break;
 		case 'followfriend':
@@ -1419,18 +1433,14 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				var obj = {};
-				obj.follows = {};
-
+				var trans = new Transaction(db, uid);
 				if (follow > 0) {
-					db.sadd('follows:'+uid, target, check(function(){
-						obj.follows[target] = 1;
-						sendobj(obj);
+					trans.sadd('follows', target, check(function(){
+						sendobj(trans.obj);
 					}));
 				} else {
-					db.srem('follows:'+uid, target, check(function(){
-						obj.follows[target] = null;
-						sendobj(obj);
+					trans.srem('follows', target, check(function(){
+						sendobj(trans.obj);
 					}));
 				}
 			});
@@ -1538,7 +1548,6 @@ wss.on('connection', function(ws) {
 												trans
 												.multi()
 												.hsetjson('equip', index, equip)
-//												.hset('girlequip', index, 0)
 												.exec(check(function(){
 													sendobj(trans.obj);
 												}));
@@ -1726,7 +1735,7 @@ wss.on('connection', function(ws) {
 									multi.hmset('girl.'+girlid, girl);
 								}
 								multi.sadd('girls', addedgirls);
-								trans.client().set('girls', allgirls);
+//								trans.client().set('girls', allgirls);
 							}
 	
 							// items
@@ -1739,7 +1748,6 @@ wss.on('connection', function(ws) {
 								for (var index in addedequips) {
 									multi
 									.hsetjson('equip', index, addedequips[index]);
-//									.hset('girlequip', index, 0);
 								}
 								multi.server().set('next_equip_id', next_equip_id);
 							}
@@ -1888,8 +1896,8 @@ wss.on('connection', function(ws) {
 								// owner gift
 								db.incr('next_gift_id:'+ownerUid, check(function(owneridx){
 									var trans2 = new Transaction(db, ownerUid);
-									trans2.hsetjson('gift', owneridx, new Gift(REDEEM_OWNER_GIFT), check(function(){
-										notifymsg(ownerUid, {cmd:'view', data:trans2.obj});
+									trans2.hsetjson('gift', owneridx, new Gift(Const.REDEEM_OWNER_GIFT), check(function(){
+										sendto(ownerUid, trans2.obj);
 									}));
 								}));
 							}));
@@ -1991,6 +1999,24 @@ wss.on('connection', function(ws) {
 				}
 			});
 			break;
+		case 'evolvegirl':
+			//@cmd evolvegirl
+			//@data girlid
+			//@desc 战姬进化
+			getuser(function(user, uid){
+				try {
+					var girlid = msg.data.girlid;
+				} catch (e) {
+					senderr('msg_err');
+					return;
+				}
+
+				// girls -- set
+				// girl.oldGirlID:uid => girl.newGirlID:uid	-- hash
+				// girlequip -- hash 
+				// team -- array
+			});
+			break;
 		case 'setequip':
 			//@cmd setequip
 			//@data girlid
@@ -2002,6 +2028,7 @@ wss.on('connection', function(ws) {
 					var girlid = msg.data.girlid;
 					var equipIdx = msg.data.equipidx;
 					var pos = msg.data.pos;
+					console.log(girlid, equipIdx, pos);
 					if (equipIdx==0 && pos==0) {
 						senderr('param_err');
 					}
@@ -2019,32 +2046,34 @@ wss.on('connection', function(ws) {
 					var del = [];
 					var moded = false;
 					if (prevEquipIdx && prevEquipIdx != 0) {	// girl:pos already has equip => equip.girl:pos = 0
-//						mod[prevEquipIdx] = 0;
-//						moded = true;
 						del.push(prevEquipIdx);
 					}
 					if (prevGirlPos && prevGirlPos != 0) { // equip already has girl:pos => del girl:pos.equip
 						del.push(prevGirlPos);
 					}
-					if (equipIdx && equipIdx != 0) {
-						mod[equipIdx] = girlPos;
-						moded = true;
-					} else {
-						del.push(girlPos);
+
+					var girlOk = girlPos && girlPos != 0;
+					var putOn = equipIdx && equipIdx != 0;
+					if (girlOk) {
+						if (putOn) {
+							mod[girlPos] = equipIdx;
+							mod[equipIdx] = girlPos;
+							moded = true;
+						} else {	// take off
+							del.push(girlPos);
+						}
 					}
 
-					if (girlPos != 0) {
-						mod[girlPos] = equipIdx;
-						moded = true;
-					}
 					if (del.length>0 || moded) {
 						var trans = new Transaction(db, uid);
 						var multi = trans.multi();
 						if (del.length>0) {
 							multi.hdel('girlequip', del);
+							console.log('del',del);
 						}
 						if (moded) {
 							multi.hmset('girlequip', mod);
+							console.log('mod',mod);
 						}
 						multi.exec(check(function(){
 							sendobj(trans.obj);
@@ -2098,8 +2127,9 @@ wss.on('connection', function(ws) {
 						}
 						multi
 						.hdel('equip', equipindices)
-						.hincrby('item', 12000, totalMoney)
+						.hincrby('item', Const.CREDIT_ID, totalMoney)
 						.exec(function() {
+							console.log(trans.obj);
 							sendobj(trans.obj);
 						});
 					}));
@@ -2130,7 +2160,7 @@ wss.on('connection', function(ws) {
 							n = 30;
 						}
 						var newcnt = cnt + n;
-						if (newcnt > 400) {	//TODO: settings
+						if (newcnt > Const.MAX_SLOT) {
 							senderr('max_slots_err');
 							return;
 						}
@@ -2147,16 +2177,83 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
+		case 'finishmission':
+			//@cmd finishmission
+			//@data id
+			//@desc 领取任务奖励
+			getuser(function(user, uid){
+				//TODO: we need to delete old missions
+				try {
+					var id = msg.data.id;
+					var mission = table.mission[id];
+					var missionIdx = id - Const.MISSION_ID_OFFSET;
+					if (!mission) {
+						throw new Error();
+					}
+				} catch (e) {
+					senderr('msg_err');
+					return;
+				}
+
+				// mission type
+				// 1 - once
+				// 2 - daily
+				// 3 - weekly
+				// 4 - monthly
+				// refreshed at 5 a.m.
+				var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
+				var keyname;
+				switch (mission.TimeType) {
+					case 1:	// once
+						keyname = 'once';
+						break;
+					case 2:	// daily
+						keyname = 'daily:'+time.format('YYYYMMDD');
+						break;
+					case 3:	// weekly
+						keyname = 'weekly:'+time.format('YYYYw');
+						break;
+					case 4:	// monthly
+						keyname = 'monthly:'+time.format('YYYYMM');
+						break;
+				}
+
+				if (!keyname) {
+					senderr('mission_err');
+					return;
+				}
+
+				db.hget(keyname, uid, check(function(){
+				}));
+			});
+			break;
+		case 'getmapreward':
+			//@cmd mapreward
+			//@data id
+			//@desc 领取地图任务奖励
+			getuser(function(user, uid){
+				try {
+					var id = msg.data.id;
+				} catch (e) {
+					senderr('msg_err');
+					return;
+				}
+			});
+			break;
 		case 'finishmap':
 			//@cmd finishmap
-			//@data mapid
-			//@data rank
+			//@data info
 			//@desc 地图过关（mapid:rank$count）
 			getuser(function(user, uid){
 				try {
-					var mapid = msg.data.mapid;
-					var rank = parseInt(msg.data.rank);
-					if (!table.map[mapid] || rank<0 || rank>3) {
+					var info = msg.data.info;
+					console.log(info);
+					var mapid = info.mapId;
+					var map = table.map[mapid];
+					var items = info.getItem;
+					var score = Math.floor(info.score);
+					var team = info.team;
+					if (!map || isNaN(score) || team<1 || team>5) {
 						throw new Error();
 					}
 				} catch (e) {
@@ -2164,22 +2261,82 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
+				var trans = new Transaction(db, uid);
+
+				// map.mapid:uid {mission:1$1$1, rank:<int>, cnt:<int>}
 				db.hget('map:'+uid, mapid, check(function(mapdata){
-					var oldrank = 0;
-					var oldcount = 0;
-					if (mapdata) {
-						var datalist = mapdata.split('$');
-						oldrank = datalist[0];
-						oldcount = Math.floor(datalist[1]);
-					}
-					if (rank < oldrank) {
-						rank = oldrank;
-					}
-					var count = oldcount + 1;
-					var trans = new Transaction(db, uid);
-					trans.hset('map', mapid, rank+'$'+count, check(function(){
-						sendobj(trans.obj);
-					}));
+					// add role exp			-- role
+					addRoleExp(trans, uid, map.Exp, function(){
+
+						// add girlexp			-- girl
+						db.lrange('team.'+team+':'+uid,0,-1,check(function(girllist){
+							var cnt = girllist.length;
+							if (cnt==0) {
+								senderr('game_err');
+								return;
+							}
+
+							// compute grade (S A B C D 1-5)-- map
+							trans.client().set('grade', getGrade(mapid, score));
+
+							girllist.forEach(function(girlid,i){
+								addGirlExp(trans, uid, girlid, map.Exp, function(){
+									if (i < cnt-1) {
+										return;
+									}
+
+									// add girl done
+
+									// add money			-- item
+									if (!items[Const.CREDIT_ID]) {
+										items[Const.CREDIT_ID] = 0;
+									}
+									items[Const.CREDIT_ID] += map.Money;
+
+									// add item				-- item
+									var itemids = [];
+									for (var itemid in items) {
+										// check item type
+										if (table.item[itemid].Type != 4) {
+											itemids.push(itemid);
+										}
+									}
+
+									var itemcnt = itemids.length;
+									itemids.forEach(function(itemid,i){
+										trans.hincrby('item', itemid, items[itemid], check(function(){
+											if (i < itemcnt-1) {
+												return;
+											}
+
+											// add item done
+
+											// add contribution		-- contrib
+											var contrib = Math.ceil(score/1000);
+											trans.zincrby('contrib', contrib, uid, check(function(newcontrib){
+												// update score board	-- score
+												db.zscore('score', uid, check(function(oldscore){
+													if (score > oldscore) {
+														db.zadd('score', score, uid, check(function(){
+															trans.client().set('score', score);
+
+															getRanks(trans, uid, function(){
+																sendobj(trans.obj);
+															});
+														}));
+													} else {
+														getRanks(trans, uid, function(){
+															sendobj(trans.obj);
+														});
+													}
+												}));
+											}));
+										}));
+									});
+								});
+							});
+						}));
+					});
 				}));
 			});
 			break;
@@ -2389,42 +2546,6 @@ wss.on('connection', function(ws) {
 							}
 						}));
 					}
-				}));
-			});
-			break;
-		case 'addequipslot':
-			//@cmd addequipslot
-			//@data cnt
-			//@desc 增加装备格子
-			getuser(function(user, uid) {
-				var cnt = msg.data.cnt;
-				var cost = 1000;	//TODO: real cost
-				var maxSlots = 400;
-
-				// cost photon seed
-				db.hget('item:'+uid, Const.PHOTON_ID, check(function(photon){
-					var totalcost = cnt*cost;
-					if (totalcost > photon) {
-						senderr('not_enogh_12001_err');
-						return;
-					}
-
-					db.hget('role:'+uid, 'EquipSlot', check(function(slots){
-						if (slots + cnt > maxSlots) {
-							senderr('max_slots_err');
-							return;
-						}
-
-						var trans = new Transaction(db, uid);
-						trans
-						.multi()
-						.hincrby('role', 'EquipSlot', cnt)
-						.hincrby('item', Const.PHOTON_ID, -totalcost)
-						.exec(checklist(2,function(){
-							sendobj(trans.obj);
-						}));
-
-					}));
 				}));
 			});
 			break;
