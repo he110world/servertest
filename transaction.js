@@ -358,6 +358,23 @@ Transaction.prototype.expire = function (key, sec, cb) {
 	}
 }
 
+Transaction.prototype.del = function (key, cb) {
+	var fullkey = key+':'+this.uid;
+	this.obj[key] = null;
+	if (this.mul) {
+		this.mul.del(fullkey);
+		this.skipkey();
+		return this;
+	} else {
+		var self = this;
+		this.db.del(fullkey, function(err,count){
+			if (typeof cb == 'function') {
+				cb(err,count);
+			}
+		});
+	}
+}
+
 Transaction.prototype.hdel = function (key, hkey, cb) {
 	var fullkey = key+':'+this.uid;
 	if (this.mul) {

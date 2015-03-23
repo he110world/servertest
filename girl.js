@@ -19,6 +19,10 @@ Girl.prototype.newGirl = function (table, id) {
 	this.Birth = Date.now();
 }
 
+Girl.prototype.evolve = function (old) {
+	
+}
+
 //TODO: precompute this!
 Girl.prototype.fourStars = function (table) {
 	var girls = [];

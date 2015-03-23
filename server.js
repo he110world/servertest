@@ -2006,15 +2006,133 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var girlid = msg.data.girlid;
+					var girl = table.girl[girlid];
+					var newid = girl.EvolutionID;
+					if (!newid) {
+						throw new Error();
+					}
 				} catch (e) {
 					senderr('msg_err');
 					return;
 				}
 
-				// girls -- set
-				// girl.oldGirlID:uid => girl.newGirlID:uid	-- hash
-				// girlequip -- hash 
-				// team -- array
+				// can evolve?
+				// level
+				db.hgetall('girl.'+girlid+':'+uid, check(function(oldgirl){
+					if (!oldgirl || oldgirl.Lv < girl.EvolutionLev) {
+						senderr('data_err');
+						return;
+					}
+					// material
+					var mat_counts = girl.EvolutionItem.split('$');
+					var mats = [], counts = [];
+					for (var m in mat_counts) {
+						var matcount = mat_counts[m].split('~');
+						mats.push(Math.floor(matcount[0]));
+						counts.push(Math.floor(matcount[1]));
+					}
+
+					var itemmod = {};
+					db.hmget('item:'+uid, mats, check(function(mycounts){
+						for (var i in mats) {
+							var remain = mycounts[i] - counts[i];
+							if (remain < 0) {
+								senderr('not_enough_item_err');
+								return;
+							}
+
+							itemmod[mats[i]] = remain;
+						}
+
+						var trans = new Transaction(db, uid);
+
+						// use items
+						var updateItems = function (cb) {
+							trans.hmset('item', itemmod, check(function(){
+								cb();
+							}));
+						}
+
+						// girlequip -- hash 
+						// remove old, add new
+						var updateGirlEquips = function (cb) {
+							var girlposlist = [girlid+':1', girlid+':2', girlid+':3', girlid+':4'];
+							db.hmget('girlequip:'+uid, girlposlist, checklist(4,function(girlequips){
+								var del = [];
+								var mod = {};
+								for (var i in girlequips) {
+									var equipidx = girlequips[i];
+									if (equipidx) {
+										del.push(girlposlist[i]);
+										var newgirlpos = newid+':'+(i+1);
+										mod[equipidx] = newgirlpos;
+										mod[newgirlpos] = equipidx;
+									}
+								}
+
+								if (del.length > 0) {
+									trans.hdel('girlequip', del, check(function(){
+										trans.hmset('girlequip', mod, check(function(){
+											cb();
+										}));
+									}));
+								} else {
+									cb();
+								}
+							}));
+						}
+
+						// girls -- set
+						// remove old, add new
+						var updateGirls = function (cb) {
+							trans.srem('girls', girlid, check(function(){
+								trans.sadd('girls', newid, check(function(){
+									// girl.oldGirlID:uid => girl.newGirlID:uid	-- hash
+									// rename hash
+									oldgirl.ID = newid;
+									oldgirl.Birth = Date.now();
+									oldgirl.Cost = table.girl[newid].Cost;
+
+									trans.del('girl.'+girlid, check(function(){
+										trans.hmset('girl.'+newid, oldgirl, check(function(){
+											cb();
+										}));
+									}));
+								}));
+							}));
+						}
+
+						// team -- array
+						// remove old, add new
+						var updateTeam = function (cb) {
+							if (oldgirl.Team) {
+								db.lrange('team.'+oldgirl.Team+':'+uid, 0, -1, check(function(teamgirls){
+									var idx = teamgirls.indexOf(girlid);
+									if (idx == -1) {
+										senderr('db_err');
+										return;
+									}
+									trans.lset('team.'+oldgirl.Team, idx, newid, check(function(){
+										cb();
+									}));
+								}));
+							} else {
+								cb();
+							}
+						}
+
+						// do the update
+						updateGirlEquips(function(){
+							updateGirls(function(){
+								updateTeam(function(){
+									updateItems(function(){
+										sendobj(trans.obj);
+									});
+								});
+							});
+						});
+					}));
+				}));
 			});
 			break;
 		case 'setequip':
@@ -2091,12 +2209,16 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var equipindices = msg.data.equipidx;
+					if (!equipindices) {
+						throw new Error();
+					}
 				} catch (e) {
 					senderr('param_err');
 					return;
 				}
 
 				db.hmget('equip:'+uid, equipindices, check(function(jsonList){
+					console.log(jsonList);
 					// give me money
 					var totalMoney = 0;
 					for (var i in jsonList) {
@@ -2106,7 +2228,13 @@ wss.on('connection', function(ws) {
 							continue;
 						}
 
-						var equipId = json.substr(6,5);	//HACK!!
+						var equipId;
+						if (json[6] == '"') {
+							equipId = json.substr(7,5);	//HACK!!
+						} else {
+							equipId = json.substr(6,5);	//HACK!!
+						}
+
 						totalMoney += table.equip[equipId].Credit;
 					}
 
@@ -2250,7 +2378,7 @@ wss.on('connection', function(ws) {
 					console.log(info);
 					var mapid = info.mapId;
 					var map = table.map[mapid];
-					var items = info.getItem;
+					var items = info.getItem || {};
 					var score = Math.floor(info.score);
 					var team = info.team;
 					if (!map || isNaN(score) || team<1 || team>5) {
@@ -2263,7 +2391,7 @@ wss.on('connection', function(ws) {
 
 				var trans = new Transaction(db, uid);
 
-				// map.mapid:uid {mission:1$1$1, rank:<int>, cnt:<int>}
+				// map.mapid:uid {mission:1$1$1, cnt:<int>}
 				db.hget('map:'+uid, mapid, check(function(mapdata){
 					// add role exp			-- role
 					addRoleExp(trans, uid, map.Exp, function(){
