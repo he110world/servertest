@@ -26,6 +26,7 @@ var Gift = require('./gift');
 var Const = require('./const');
 var Util = require('./util');
 var moment = require('moment');
+var sectionDifficultyTable = genSDT();
 
 // kpi
 var kpi = require('./kpilog');
@@ -37,6 +38,18 @@ var wss = new WebSocketServer({port: port});
 var uid2ws = {};	// uid->ws
 var ws2uid = {};
 var appid = Util.randomString(32);
+
+// generate section-difficulty LUT
+function genSDT () {
+	var sdt = {};
+	for (var mapid in table.map) {
+		var map = table.map[mapid];
+		var sd = map.Section + ':' + map.Difficulty;
+		sdt[sd] = sdt[sd] || [];
+		sdt[sd].push(mapid);
+	}
+	return sdt;
+}
 
 function response (ws, cmd, data, id) {
 	if (ws.readyState != ws.OPEN) {
@@ -508,7 +521,21 @@ wss.on('connection', function(ws) {
 			});
 		}
 
-		function addRoleExp(trans, uid, expinc, cb) {
+		function addGift(trans, giftid, cb) {
+			var uid = trans.uid;
+			if (!table.gift[giftid]) {
+				cb();
+				return;
+			}
+			db.incr('next_gift_id:'+uid, check(function(idx){
+				trans.hsetjson('gift', idx, new Gift(giftid), check(function(){
+					cb();
+				}));
+			}));
+		}
+
+		function addRoleExp(trans, expinc, cb) {
+			var uid = trans.uid;
 			var query = ['Lv', 'RoleExp'];
 			db.hmget('role:'+uid, query, checklist(2,function(data){
 				var role = new Role(table);
@@ -1187,7 +1214,7 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				//we need Lv & RoleExp
 				var trans = new Transaction(db, uid);
-				addRoleExp(trans, uid, expinc, function(){
+				addRoleExp(trans, expinc, function(){
 					sendobj(trans.obj);
 				});
 			});
@@ -2091,7 +2118,6 @@ wss.on('connection', function(ws) {
 									// rename hash
 									oldgirl.ID = newid;
 									oldgirl.Birth = Date.now();
-									oldgirl.Cost = table.girl[newid].Cost;
 
 									trans.del('girl.'+girlid, check(function(){
 										trans.hmset('girl.'+newid, oldgirl, check(function(){
@@ -2112,8 +2138,24 @@ wss.on('connection', function(ws) {
 										senderr('db_err');
 										return;
 									}
-									trans.lset('team.'+oldgirl.Team, idx, newid, check(function(){
-										cb();
+									teamgirls[idx] = newid;
+
+									// check cost
+									db.hget('role:'+uid, 'Cost', check(function(teamcost){
+										var totalcost = 0;
+										for (var t in teamgirls) {
+											totalcost += table.girl[teamgirls[t]].Cost;
+										}
+										if (totalcost > teamcost) {	// over cost -> remove from team
+											delete oldgirl.Team;
+											trans.lrem('team.'+oldgirl.Team, 1, girlid, check(function(){
+												cb();
+											}));
+										} else {
+											trans.lset('team.'+oldgirl.Team, idx, newid, check(function(){
+												cb();
+											}));
+										}
 									}));
 								}));
 							} else {
@@ -2123,8 +2165,8 @@ wss.on('connection', function(ws) {
 
 						// do the update
 						updateGirlEquips(function(){
-							updateGirls(function(){
-								updateTeam(function(){
+							updateTeam(function(){
+								updateGirls(function(){
 									updateItems(function(){
 										sendobj(trans.obj);
 									});
@@ -2362,10 +2404,96 @@ wss.on('connection', function(ws) {
 			getuser(function(user, uid){
 				try {
 					var id = msg.data.id;
+					var mapreward = table.mapreward[id];
+					if (!mapreward) {
+						throw new Error();
+					}
 				} catch (e) {
 					senderr('msg_err');
 					return;
 				}
+
+				db.getbit('mapreward:'+uid, id, check(function(got){
+					if (got) {	// already got reward
+						sendnil();
+						return;
+					}
+
+					var getreward = function () {
+						var key = 'mapreward:'+uid;
+						db.setbit(key, id, check(function(){
+							db.get(key, check(function(rewards){
+								var gifts = mapreward.Reward1.split('$');
+								var trans = new Transaction(db, uid);
+								gifts.forEach(function(giftid, i){
+									addGift(trans, giftid, function(){
+										if (i == gifts.length) {	// done
+											trans.client().set('mapreward', rewards);
+											sendobj(trans.obj);
+										}
+									});
+								});
+							}));
+						}));
+					}
+
+					var getfinish = function (maplist, cb) {
+						if (maplist) {
+							db.hmget('map:'+uid, maplist, check(function(statelist){
+								var finish = 0;
+								for (var i in statelist) {
+									var state = statelist[i];
+									if (state !== null) {
+										++finish;
+									}
+									if (state & 1) {
+										++finish;
+									}
+									if (state & 2) {
+										++finish;
+									}
+									if (state & 4) {
+										++finish;
+									}
+								}
+								var total = statelist.length * 4;
+								cb(finish * 100 / total);
+							}));
+						} else {
+							sendnil();
+						}
+					}
+
+					var val = mapreward.ConditionValue1;
+					switch (mapreward.ConditionType1) {
+						case 1:	// finish map
+							if (val) {
+								db.hget('map:'+uid, val, check(function(mstate){
+									if (mstate !== null) {
+										getreward();
+									} else {
+										sendnil();
+									}
+								}));
+							} else {
+								sendnil();
+							}
+							break;
+						case 2:	// percentage
+							var maplist = sectionDifficultyTable[mapreward.Section + ':' + mapreward.Difficulty];
+							getfinish(maplist, function(finish){
+								if (finish >= val) {
+									getreward();
+								} else {
+									sendnil();
+								};
+							});
+							break;
+						default:
+							sendnil();
+							break;
+					}
+				}));
 			});
 			break;
 		case 'finishmap':
@@ -2391,10 +2519,13 @@ wss.on('connection', function(ws) {
 
 				var trans = new Transaction(db, uid);
 
-				// map.mapid:uid {mission:1$1$1, cnt:<int>}
-				db.hget('map:'+uid, mapid, check(function(mapdata){
+				// map:uid {mapid:bitmap}
+				db.hget('map:'+uid, mapid, check(function(mapmission){
+					var first = mapmission === null;
+					mapmission = mapmission || 0;
+
 					// add role exp			-- role
-					addRoleExp(trans, uid, map.Exp, function(){
+					addRoleExp(trans, map.Exp, function(){
 
 						// add girlexp			-- girl
 						db.lrange('team.'+team+':'+uid,0,-1,check(function(girllist){
@@ -2405,7 +2536,8 @@ wss.on('connection', function(ws) {
 							}
 
 							// compute grade (S A B C D 1-5)-- map
-							trans.client().set('grade', getGrade(mapid, score));
+							var grade = getGrade(mapid, score);
+							trans.client().set('grade', grade);
 
 							girllist.forEach(function(girlid,i){
 								addGirlExp(trans, uid, girlid, map.Exp, function(){
@@ -2440,6 +2572,50 @@ wss.on('connection', function(ws) {
 											// add item done
 
 											// add contribution		-- contrib
+											var updateMapMission = function (cb) {
+												var mstate = 0;
+												for (var j=1; j<=3; j++) {
+													var val = map['RequirementValue'+j];
+													switch (map['StarRequirement'+j]) {
+														case 1:
+															if (!val || kill > val) {
+																mstate |= 1;
+															}
+															break;
+														case 2:
+															if (!val || hp > val) {
+																mstate |= 2;
+															}
+															break;
+														case 3:
+															if (!val || grade<=val) {
+																mstate |= 7;
+															}
+															break;
+													}
+												}
+
+												var newmission = mapmission | mstate;
+												if (first || newmission != mapmission) {
+													trans.hset('map', mapid, newmission, check(function(){
+														cb();
+													}));
+												} else {
+													cb();
+												}
+											}
+
+											var done = function () {
+												// incr map count
+											//	trans.hincrby('map', mapid+':cnt', 1, check(function(){
+													// check map mission
+													updateMapMission(function(){
+														getRanks(trans, uid, function(){
+															sendobj(trans.obj);
+														});
+													});
+											//	});
+											}
 											var contrib = Math.ceil(score/1000);
 											trans.zincrby('contrib', contrib, uid, check(function(newcontrib){
 												// update score board	-- score
@@ -2447,15 +2623,10 @@ wss.on('connection', function(ws) {
 													if (score > oldscore) {
 														db.zadd('score', score, uid, check(function(){
 															trans.client().set('score', score);
-
-															getRanks(trans, uid, function(){
-																sendobj(trans.obj);
-															});
+															done();
 														}));
 													} else {
-														getRanks(trans, uid, function(){
-															sendobj(trans.obj);
-														});
+														done();
 													}
 												}));
 											}));
