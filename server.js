@@ -2352,7 +2352,7 @@ wss.on('connection', function(ws) {
 			//@data id
 			//@desc 领取任务奖励
 			getuser(function(user, uid){
-				//TODO: we need to delete old missions
+				//TODO: we need to delete old missions. Cron?
 				try {
 					var id = msg.data.id;
 					var mission = table.mission[id];
@@ -2398,7 +2398,7 @@ wss.on('connection', function(ws) {
 			});
 			break;
 		case 'getmapreward':
-			//@cmd mapreward
+			//@cmd getmapreward
 			//@data id
 			//@desc 领取地图任务奖励
 			getuser(function(user, uid){
@@ -2420,15 +2420,13 @@ wss.on('connection', function(ws) {
 					}
 
 					var getreward = function () {
-						var key = 'mapreward:'+uid;
-						db.setbit(key, id, check(function(){
-							db.get(key, check(function(rewards){
+						db.setbit('mapreward:'+uid, id, check(function(){
+							var trans = new Transaction(db, uid);
+							trans.get('mapreward', check(function(){
 								var gifts = mapreward.Reward1.split('$');
-								var trans = new Transaction(db, uid);
 								gifts.forEach(function(giftid, i){
 									addGift(trans, giftid, function(){
 										if (i == gifts.length) {	// done
-											trans.client().set('mapreward', rewards);
 											sendobj(trans.obj);
 										}
 									});
@@ -2996,6 +2994,11 @@ wss.on('connection', function(ws) {
 						break;
 					case 'map':
 						trans.hgetall('map', check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
+					case 'mapreward':
+						trans.get('mapreward', check(function(){
 							sendobj(trans.obj);
 						}));
 						break;

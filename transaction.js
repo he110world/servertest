@@ -490,6 +490,20 @@ Transaction.prototype.server = function () {
 	return this;
 }
 
+Transaction.prototype.get = function (key, cb) {
+	var fullkey = key+':'+this.uid;
+	if (this.mul) {
+		this.mul.get(fullkey);
+		this.addkey(key);
+	} else {
+		this.db.get(fullkey, function(err,val){
+			if (typeof cb == 'function') {
+				cb(err,val);
+			}
+		});
+	}
+}
+
 Transaction.prototype.set = function (key, val, cb) {
 	if (this.serv) {
 		this.serv = false;
