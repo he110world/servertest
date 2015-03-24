@@ -248,6 +248,7 @@ Transaction.prototype.zincrby = function (key, incr, member, cb) {
 Transaction.prototype.hmset = function (key, mobj, cb) {
 	var fullkey = key+':'+this.uid;
 	merge(this.obj, key, mobj); // don't wait for result : it's already known
+	console.log('hmset',this.mul,this.cli,fullkey,mobj);
 	if (this.mul) {
 		this.mul.hmset(fullkey, mobj);
 		this.skipkey();
@@ -393,7 +394,7 @@ Transaction.prototype.hdel = function (key, hkey, cb) {
 	} else {
 		var self = this;
 		if (typeof hkey == 'object') {
-			this.db.hdel.apply(this.db, [fullkey].concat(hkey), function(err,count){
+			this.db.hdel.apply(this.db, [fullkey].concat(hkey, function(err,count){
 				for (var i in hkey) {
 					self.obj[key] = self.obj[key] || {};
 					self.obj[key][hkey[i]] = null;
@@ -401,7 +402,7 @@ Transaction.prototype.hdel = function (key, hkey, cb) {
 				if (typeof cb == 'function') {
 					cb(err,count);
 				}
-			});
+			}));
 		} else {
 			this.db.hdel(fullkey, hkey, function(err,count){
 				merge(self.obj, key+'.'+hkey, null);

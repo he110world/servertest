@@ -2087,11 +2087,12 @@ wss.on('connection', function(ws) {
 							db.hmget('girlequip:'+uid, girlposlist, checklist(4,function(girlequips){
 								var del = [];
 								var mod = {};
-								for (var i in girlequips) {
+								for (var i=0; i<girlequips.length; i++) {
 									var equipidx = girlequips[i];
 									if (equipidx) {
 										del.push(girlposlist[i]);
 										var newgirlpos = newid+':'+(i+1);
+										console.log(newgirlpos,i+1);
 										mod[equipidx] = newgirlpos;
 										mod[newgirlpos] = equipidx;
 									}
@@ -2347,8 +2348,29 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'finishmission':
-			//@cmd finishmission
+		case 'finishMission':
+			//@cmd finishMission
+			//@data id
+			//@desc 标记任务完成（尚未领取奖励）
+
+			getuser(function(user, uid){
+				try {
+					var id = msg.data.id;
+					var mission = table.mission[id];
+					var missionIdx = id - Const.MISSION_ID_OFFSET;
+					if (!mission) {
+						throw new Error();
+					}
+				} catch (e) {
+					senderr('msg_err');
+					return;
+				}
+
+				// iff mission state is 1
+			});
+			break;
+		case 'getMissionReward':
+			//@cmd getMissionReward
 			//@data id
 			//@desc 领取任务奖励
 			getuser(function(user, uid){
@@ -2356,7 +2378,7 @@ wss.on('connection', function(ws) {
 				try {
 					var id = msg.data.id;
 					var mission = table.mission[id];
-					var missionIdx = id - Const.MISSION_ID_OFFSET;
+					var idx = id - Const.MISSION_ID_OFFSET;
 					if (!mission) {
 						throw new Error();
 					}
@@ -2371,29 +2393,112 @@ wss.on('connection', function(ws) {
 				// 3 - weekly
 				// 4 - monthly
 				// refreshed at 5 a.m.
-				var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
 				var keyname;
-				switch (mission.TimeType) {
-					case 1:	// once
-						keyname = 'once';
-						break;
-					case 2:	// daily
-						keyname = 'daily:'+time.format('YYYYMMDD');
-						break;
-					case 3:	// weekly
-						keyname = 'weekly:'+time.format('YYYYw');
-						break;
-					case 4:	// monthly
-						keyname = 'monthly:'+time.format('YYYYMM');
-						break;
+				if (mission.TimeType == 1) {	// once
+					keyname = 'once';
+				} else {
+					var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
+					switch (mission.TimeType) {
+						case 2:	// daily
+							keyname = 'daily:'+time.format('YYYYMMDD');
+							break;
+						case 3:	// weekly
+							keyname = 'weekly:'+time.format('YYYYw');
+							break;
+						case 4:	// monthly
+							keyname = 'monthly:'+time.format('YYYYMM');
+							break;
+					}
 				}
-
 				if (!keyname) {
 					senderr('mission_err');
 					return;
 				}
 
-				db.hget(keyname, uid, check(function(){
+				db.hget(keyname, uid, check(function(mstate){
+					var isfinished = function(state, i) {
+						return mstate && mstate[i]=='1' || mstate[i]=='2';
+					}
+
+					var givereward = function(ms, done) {
+					}
+
+					var err = function() {
+						senderr('mission_err');
+					}
+
+					var tryfinish = function(ms, done) {
+						var val = ms.FinishConditionValue;
+						switch (ms.FinishCondition) {
+//							case 1:	// finishmap: mapid & grade				=> no condition 
+//								break;
+//							case 2:	// finishmap: team: 4 girls				=> no condition
+//								break;
+							case 3:	// evolvegirl: n evolved girls
+								db.smembers('girls:'+uid, check(function(girls){
+									var cnt = 0;
+									for (var i in girls) {
+										var g = table.girl[girls[i]];
+										if (g && g.Lv==0) {
+											++cnt;
+										}
+									}
+									if (cnt >= val) {
+										givereward(ms, done);
+									} else {
+										err();
+									}
+								}));
+								break;
+							case 4:	// finishmap: n fights (sp or mp)		- record num of fights	mapstat:{sp:<int>,mp:<int>}
+								break;
+							case 5:	// finishmap: n kills					- record num kills		mapstat:{kill:<int>}
+								break;
+//							case 6:	// useitem: use medal					=> no condition
+//								break;
+//							case 7:	// finishmap: challange map score > n	=> no condition
+//								break;
+							case 8:	// finishmap: n mp fights				- record num of fights 
+								break;
+							case 9:	// finishmap: kill n exboss				- record num of exboss killed	mapstat:{exboss:<int>}
+								break;
+							case 10:// finishmap: score < n
+								break;
+							case 11:// finishmap: contrib < n
+								break;
+							default:// no condition
+								givereward(ms, done);
+								break;
+						}
+					}
+					if (isfinished(mstate, i)) {	// already finished
+						sendnil();
+						return;
+					}
+
+					var val = mission.StartConditionValue;
+					switch (mission.StartCondition) {
+						case 1:	// mapid finished
+							db.hget('map:'+uid, mapid, check(function(mapmission){
+								if (mapmission !== null) {	// can start
+									// can finish ?
+									tryfinish();
+								} else {
+									senderr('mission_err');
+								}
+							}));
+							break;
+						case 2:	// mission finished
+							if (isfinished(mstate, val-Const.MISSION_ID_OFFSET)) {	// can start
+								// can finish
+								tryfinish();
+							} else {
+								senderr('mission_err');
+							}
+							break;
+						default:	// no condition
+							break;
+					}
 				}));
 			});
 			break;
