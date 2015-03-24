@@ -33,7 +33,7 @@ friendbrief,{"cmd":"friendbrief";"data":{"uids":{0}};"session":{1}},好友简要
 frienddetail,{"cmd":"frienddetail";"data":{"target":{0}};"session":{1}},好友详细信息
 usegift,{"cmd":"usegift";"data":{"index":{0}};"session":{1}},领取礼包
 useallgifts,{"cmd":"useallgifts";"session":{0}},领取全部礼包
-useitem,{"cmd":"useitem";"data":{"itemid":{0};"targetid":{1}};"session":{2}},使用物品(targetid可以是girl的id之类的值)
+useitem,{"cmd":"useitem";"data":{"id":{0};"targetid":{1};"cnt":{2}};"session":{3}},使用物品(targetid可以是girl的id之类的值 cnt:数量，默认为1)
 redeem,{"cmd":"redeem";"data":{"code":{0}};"session":{1}},兑换码
 getactiveitem,{"cmd":"getactiveitem";"session":{0}},获取当前正在使用的道具{ID:id Timeout:ms}
 sellitem,{"cmd":"sellitem";"data":{"itemid":{0};"count":{1}};"session":{2}},卖道具
@@ -42,7 +42,8 @@ evolvegirl,{"cmd":"evolvegirl";"data":{"girlid":{0}};"session":{1}},战姬进化
 setequip,{"cmd":"setequip";"data":{"girlid":{0};"equipidx":{1};"pos":{2}};"session":{3}},战姬穿装备(e.g. setequip 130001 20 3)
 sellequips,{"cmd":"sellequips";"data":{"equipidx":{0}};"session":{1}},卖掉装备（参数：装备index数组）
 addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
-finishmission,{"cmd":"finishmission";"data":{"id":{0}};"session":{1}},领取任务奖励
+finishMission,{"cmd":"finishMission";"data":{"id":{0}};"session":{1}},标记任务完成（尚未领取奖励）
+getMissionReward,{"cmd":"getMissionReward";"data":{"id":{0}};"session":{1}},领取任务奖励
 getmapreward,{"cmd":"getmapreward";"data":{"id":{0}};"session":{1}},领取地图任务奖励
 finishmap,{"cmd":"finishmap";"data":{"info":{0}};"session":{1}},地图过关（mapid:rank$count）
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
