@@ -1913,13 +1913,14 @@ wss.on('connection', function(ws) {
 			//@desc 使用物品(targetid可以是girl的id之类的值 cnt:数量，默认为1)
 			getuser(function(user, uid){
 				try {
-					var itemid = msg.data.itemid;
+					var itemid = msg.data.id;
 					var item = table.item[itemid];
 					var cnt = msg.data.cnt || 1;
 					if (item.Type == 1) {
 						var girlid = msg.data.targetid;
 					}
 				} catch (e) {
+					console.log(e);
 					senderr('data_err,itemid');
 					return;
 				}
