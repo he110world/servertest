@@ -1,6 +1,7 @@
 var moment = require('moment');
 
 function Const () {
+	this.DEFAULT_GIRL = 10004;
 	this.LV_UP_GIFT = 14046;
 	this.BUY_GIRL_GIFT = 14047;
 	this.TWITTER_SHARE_GIFT = 14051;

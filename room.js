@@ -46,7 +46,7 @@ RecruitInfo.prototype.accept = function (search) {
 	this.uids.push(search.uid);
 	this.len = this.uids.length;
 
-	console.log('begin accept');
+	//console.log('begin accept');
 	beginOp();
 	// db ops
 	// add uid to room:<roomid>
@@ -56,7 +56,7 @@ RecruitInfo.prototype.accept = function (search) {
 
 	db.rpush('room:'+roomid, search.uid, function(){
 		endOp();
-		console.log('end accept', resultMsg, setRoomOps);
+		//console.log('end accept', resultMsg, setRoomOps);
 	});
 }
 
@@ -89,9 +89,9 @@ function doPublish () {
 		rooms.push(roomid);
 	}
 	if (rooms.length > 0) {
-		console.log('pub',rooms);
+		//console.log('pub',rooms);
 		pub.publish('recruit.rooms', rooms, function(err,data){
-			console.log(err,data);
+			//console.log(err,data);
 		});
 	}
 	if (errMsg.length > 0) {
@@ -104,11 +104,11 @@ function doPublish () {
 
 function recruit () {
 	if (totalOps > 0) {
-		console.log(totalOps, 'unfinished ops');
+		//console.log(totalOps, 'unfinished ops');
 		return;
 	}
 
-	console.log('---------');
+//	console.log('---------');
 	resultMsg = {};
 	errMsg = [];
 	setRoomOps = [];
@@ -124,7 +124,7 @@ function recruit () {
 //				var only_search = recruit_len==0 && search_len>0 && join_len==0;
 				var nothing = recruit_len==0 && search_len==0 && join_len==0;
 				if (nothing || only_recruit) {
-					console.log('early out');
+//					console.log('early out');
 
 					// search timeout
 /*					if (only_search) {
@@ -199,7 +199,7 @@ function recruit () {
 					}
 
 					if (recruitinfo.length==0 && joininfo.length==0) {
-						console.log('early out 2: no recruit or join');
+						//console.log('early out 2: no recruit or join');
 
 						// all search failed
 						if (searchlist.length > 0) {
@@ -216,9 +216,9 @@ function recruit () {
 								}
 							}
 							if (validsearch.length > 0) {
-								db.rpush.apply(db, ['search_write'].concat(searchlist).concat([function(){
+								db.rpush.apply(db, [].concat('search_write', searchlist, function(){
 									endOp();
-								}]));
+								}));
 							} else {
 								endOp();
 							}
@@ -348,7 +348,7 @@ function recruit () {
 								// write back failed items
 
 								// failed recruit
-								console.log('recruitlist',recruitlist_write);
+								//console.log('recruitlist',recruitlist_write);
 								if (recruitlist_write.length > 0) {
 									beginOp();
 									db.rpush.apply(db, ['recruit_write'].concat(recruitlist_write).concat([function(){
@@ -357,7 +357,7 @@ function recruit () {
 								}
 
 								// failed search
-								console.log('failedsearch',failedsearch);
+								//console.log('failedsearch',failedsearch);
 								if (failedsearch.length > 0) {
 									beginOp();
 									db.rpush.apply(db, ['search_write'].concat(failedsearch).concat([function(){
@@ -365,7 +365,7 @@ function recruit () {
 									}]));
 								}
 
-								console.log('setroomops',setRoomOps);
+								//console.log('setroomops',setRoomOps);
 								if (setRoomOps.length > 0) {
 									beginOp();
 									db.mset(setRoomOps, function(err){

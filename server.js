@@ -451,6 +451,49 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
+		function incrGameStat (trans, obj, cb) {
+			for (var i in obj) {
+//				trans.hincrby('gamestat', i, obj[i], 
+			}
+		}
+
+		function setMissionState (trans, keyname, mstate, cb) {
+		}
+
+		function getMissionState (mission, cb) {
+			// mission type
+			// 1 - once
+			// 2 - daily
+			// 3 - weekly
+			// 4 - monthly
+			// refreshed at 5 a.m.
+			var keyname;
+			if (mission.TimeType == 1) {	// once
+				keyname = 'once';
+			} else {
+				var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
+				switch (mission.TimeType) {
+					case 2:	// daily
+						keyname = 'daily:'+time.format('YYYYMMDD');
+						break;
+					case 3:	// weekly
+						keyname = 'weekly:'+time.format('YYYYw');
+						break;
+					case 4:	// monthly
+						keyname = 'monthly:'+time.format('YYYYMM');
+						break;
+				}
+			}
+			if (!keyname) {
+				senderr('mission_err');
+				return;
+			}
+
+			db.hget(keyname, uid, check(function(mstate){
+				cb(keyname, mstate);
+			}));
+		}
+
 		function getGrade (mapid, score) {
 			var map = table.map[mapid];
 			var mapscore = map.Score || 1;
@@ -522,13 +565,35 @@ wss.on('connection', function(ws) {
 		}
 
 		function addGift(trans, giftid, cb) {
-			var uid = trans.uid;
-			if (!table.gift[giftid]) {
+			if (!table.gift.hasOwnProperty(giftid)) {
 				cb();
 				return;
 			}
-			db.incr('next_gift_id:'+uid, check(function(idx){
+			db.incr('next_gift_id:'+trans.uid, check(function(idx){
 				trans.hsetjson('gift', idx, new Gift(giftid), check(function(){
+					cb();
+				}));
+			}));
+		}
+
+		function addItem(trans, itemid, cnt, cb) {
+			if (!table.item[itemid]) {
+				cb();
+				return;
+			}
+			trans.hincrby('item', itemid, cnt, check(function(){
+				cb();
+			}));
+		}
+
+		function addEquip(trans, equipid, cb) {
+			if (!table.equip.hasOwnProperty(equipid)) {
+				cb();
+				return;
+			}
+			db.incr('next_equip_id:'+trans.uid, check(function(idx){
+				var equip = new Equip(table, equipid);
+				trans.hsetjson('equip', idx, equip, check(function(){
 					cb();
 				}));
 			}));
@@ -578,14 +643,29 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function addgirl(trans, uid, girlid, price) {
+		function addDefaultGirl (uid, cb) {
+			var girlid = Const.DEFAULT_GIRL;
+			var girl = new Girl;
+			girl.newGirl(table, girlid);
+			girl.Team = 1;
+			db.multi()
+			.sadd('girls:'+uid, girlid)				// girls
+			.hmset('girl.'+girlid+':'+uid, girl)	// girl
+			.rpush('team.1:'+uid, girlid)			// add to team
+			.exec(check(function(){
+				cb();
+			}));
+		}
+
+		function addgirl(trans, girlid, price, cb) {
 			// invalid girl
-			if (!table.girl[girlid]) {
+			if (!table.girl.hasOwnProperty(girlid)) {
 				sendobj(trans.obj);
 				return;
 			}
 
 			// already exist?
+			var uid = trans.uid;
 			db.sismember('girls:'+uid, girlid, check(function(exist){
 				if (exist) {
 					db.incrby('next_gift_id:'+uid, 2, check2(function(index){	// two gifts for existing girl
@@ -604,7 +684,11 @@ wss.on('connection', function(ws) {
 						}
 						multi.exec(check(function(res){	// add medal
 							trans.client().set('buygirl', [girlid]);
-							sendobj(trans.obj);
+							if (typeof cb === 'function') {
+								cb();
+							} else {
+								sendobj(trans.obj);
+							}
 						}));
 					}));
 				} else {
@@ -624,7 +708,11 @@ wss.on('connection', function(ws) {
 						.sadd('girls', girlid)
 						.hmset('girl.'+girlid, girl)
 						.exec(check(function(res){
-							sendobj(trans.obj);
+							if (typeof cb === 'function') {
+								cb();
+							} else {
+								sendobj(trans.obj);
+							}
 						}));
 					}));
 				}
@@ -814,14 +902,15 @@ wss.on('connection', function(ws) {
 			return {lvmin:lvmin, lvmax:lvmax};
 		}
 
-		function makeroom (uid) {
+		function makeroom (uid, mapid) {
 			db.incr('next_room_id', check2(function(newid){
 				db.multi()
 				.set('roomid:'+uid, newid)
+				.set('roommap:'+newid, mapid)
 				.lpush('room:'+newid, uid)
 //				.expire('roomid:'+uid, 1800)	//TODO: real expire time
 //				.expire('room:'+newid, 1800)
-				.exec(checklist(2,function(data){
+				.exec(checklist(3,function(data){
 					sendobj({room:{roomid:newid, userid:[uid]}});
 				}));
 			}));
@@ -847,8 +936,9 @@ wss.on('connection', function(ws) {
 					if (room.length<=1) { // destroy the room if it's empty
 						db.multi()
 						.del('room:'+roomid)
+						.del('roommap:'+roomid)
 						.del('roomid:'+uid)
-						.exec(checklist(2,function(){
+						.exec(checklist(3,function(){
 							cb(uid,roomid);
 						}));
 					} else { // tell others that I left the room
@@ -1018,9 +1108,11 @@ wss.on('connection', function(ws) {
 			getuser(function(user,uid){
 				db.exists('roomid:'+uid, check(function(exist){
 					if (exist) {
-						quitroom(uid, makeroom);
+						quitroom(uid, function(){
+							makeroom(uid, mapid);
+						});
 					} else {
-						makeroom(uid);
+						makeroom(uid, mapid);
 					}	
 				}));
 			});
@@ -1042,29 +1134,35 @@ wss.on('connection', function(ws) {
 			}
 
 			getuser(function(user,uid){
-				var pubstr = [uid,roomid,mapid].toString();
+				db.get('roommap:'+roomid, check(function(roommap){
+					if (roommap != mapid) {
+						senderr('wrong_map_err');
+						return;
+					} 
+					var pubstr = [uid,roomid,mapid].toString();
 
-				function doJoin () {
-					db.llen('room:'+roomid, check(function(len){
-						if (len > 0) {	
-							db.rpush('join_write', pubstr);
-						} else {	// join a nonexist room
-							wss.sendcmd(uid, 'joinfail');
-						}
-					}));
-				}
+					function doJoin () {
+						db.llen('room:'+roomid, check(function(len){
+							if (len > 0) {	
+								db.rpush('join_write', pubstr);
+							} else {	// join a nonexist room
+								wss.sendcmd(uid, 'joinfail');
+							}
+						}));
+					}
 
-				db.exists('roomid:'+uid, check(function(exist){
-					if (exist) {
-						quitroom(uid, function(){
+					db.exists('roomid:'+uid, check(function(exist){
+						if (exist) {
+							quitroom(uid, function(){
+								doJoin();
+							});
+						} else {
 							doJoin();
-						});
-					} else {
-						doJoin();
-					}	
-				}));
+						}	
+					}));
 
-				sendnil();
+					sendnil();
+				}));
 			});
 			break;
 		case 'searchroom':
@@ -1582,7 +1680,7 @@ wss.on('connection', function(ws) {
 										}
 									}));
 								} else if (type == 'girl') {
-									addgirl(trans, uid, id);
+									addgirl(trans, id);
 								} else {
 									// invalid gift
 									sendobj(trans.obj);
@@ -1809,13 +1907,15 @@ wss.on('connection', function(ws) {
 			break;
 		case 'useitem':
 			//@cmd useitem
-			//@data itemid
+			//@data id
 			//@data targetid
-			//@desc 使用物品(targetid可以是girl的id之类的值)
+			//@data cnt
+			//@desc 使用物品(targetid可以是girl的id之类的值 cnt:数量，默认为1)
 			getuser(function(user, uid){
 				try {
 					var itemid = msg.data.itemid;
 					var item = table.item[itemid];
+					var cnt = msg.data.cnt || 1;
 					if (item.Type == 1) {
 						var girlid = msg.data.targetid;
 					}
@@ -1825,7 +1925,7 @@ wss.on('connection', function(ws) {
 				}
 				var itemkey = 'item:'+uid;
 				db.hget(itemkey, itemid, check(function(count){
-					if (!count || count <= 0) {
+					if (!count || count < cnt) {
 						senderr('no_item_err');
 						return;
 					}
@@ -1839,11 +1939,11 @@ wss.on('connection', function(ws) {
 									girl.Rank = data[0];
 									girl.RankExp = data[1];
 									try {
-										var modgirl = girl.addRankExp(item.EffectValue);
+										var modgirl = girl.addRankExp(item.EffectValue*cnt);
 										var trans = new Transaction(db, uid);
 										var multi = trans.multi();
 										if (count > 1) {
-											multi.hincrby('item', itemid, -1);
+											multi.hincrby('item', itemid, -cnt);
 										} else {
 											multi.hdel('item', itemid);
 										}
@@ -1883,7 +1983,7 @@ wss.on('connection', function(ws) {
 							} else if (item.Effect == 11) {	// 4 star girl
 								// addgirl
 								var girl = new Girl();
-								addgirl(trans, uid, girl.fourStars(table));
+								addgirl(trans, girl.fourStars(table));
 							}
 							break;
 						case 3:	//wuxing
@@ -2348,27 +2448,6 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'finishMission':
-			//@cmd finishMission
-			//@data id
-			//@desc 标记任务完成（尚未领取奖励）
-
-			getuser(function(user, uid){
-				try {
-					var id = msg.data.id;
-					var mission = table.mission[id];
-					var missionIdx = id - Const.MISSION_ID_OFFSET;
-					if (!mission) {
-						throw new Error();
-					}
-				} catch (e) {
-					senderr('msg_err');
-					return;
-				}
-
-				// iff mission state is 1
-			});
-			break;
 		case 'getMissionReward':
 			//@cmd getMissionReward
 			//@data id
@@ -2378,7 +2457,6 @@ wss.on('connection', function(ws) {
 				try {
 					var id = msg.data.id;
 					var mission = table.mission[id];
-					var idx = id - Const.MISSION_ID_OFFSET;
 					if (!mission) {
 						throw new Error();
 					}
@@ -2387,91 +2465,118 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				// mission type
-				// 1 - once
-				// 2 - daily
-				// 3 - weekly
-				// 4 - monthly
-				// refreshed at 5 a.m.
-				var keyname;
-				if (mission.TimeType == 1) {	// once
-					keyname = 'once';
-				} else {
-					var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
-					switch (mission.TimeType) {
-						case 2:	// daily
-							keyname = 'daily:'+time.format('YYYYMMDD');
-							break;
-						case 3:	// weekly
-							keyname = 'weekly:'+time.format('YYYYw');
-							break;
-						case 4:	// monthly
-							keyname = 'monthly:'+time.format('YYYYMM');
-							break;
-					}
-				}
-				if (!keyname) {
-					senderr('mission_err');
-					return;
-				}
-
-				db.hget(keyname, uid, check(function(mstate){
-					var isfinished = function(state, i) {
-						return mstate && mstate[i]=='1' || mstate[i]=='2';
+				getMissionState(mission, function(missionkey, mstate){
+					var getstate = function(state, missionid) {
+						var idx = missionid - Const.MISSION_ID_OFFSET;
+						if (mstate) {
+							return mstate[idx];
+						} else {
+							return 0;
+						}
 					}
 
-					var givereward = function(ms, done) {
+					var getreward = function() {
+						var trans = new Transaction(db, uid);
+						setMissionState(trans, missionkey, mstate, function(){
+							var type = Math.floor(mission.ItemID/1000);
+							switch (type) {
+								case 10:	// girl
+									addgirl(trans, mission.ItemID, 0);
+									break;
+								case 12:	// item
+									addItem(trans, mission.ItemID, mission.ItemNum, function(){
+										sendobj(trans.obj);
+									});
+									break;
+								case 13:	// equip
+									addEquip(trans, mission.ItemID, function(){
+										sendobj(trans.obj);
+									});
+									break;
+								case 14:	// gift
+									addGift(trans, mission.ItemID, function(){
+										sendobj(trans.obj);
+									});
+									break;
+								default:
+									sendobj(trans.obj);
+									break;
+							}
+						});
 					}
 
 					var err = function() {
 						senderr('mission_err');
 					}
 
-					var tryfinish = function(ms, done) {
-						var val = ms.FinishConditionValue;
-						switch (ms.FinishCondition) {
-//							case 1:	// finishmap: mapid & grade				=> no condition 
-//								break;
-//							case 2:	// finishmap: team: 4 girls				=> no condition
-//								break;
-							case 3:	// evolvegirl: n evolved girls
-								db.smembers('girls:'+uid, check(function(girls){
-									var cnt = 0;
-									for (var i in girls) {
-										var g = table.girl[girls[i]];
-										if (g && g.Lv==0) {
-											++cnt;
+					var checkstat = function (key, targetval, leq) {
+						db.hget('gamestat:'+uid, key, check(function(val){
+							if ((!leq && val >= targetval) || (leq && val <= targetval)) {
+								getreward();
+							} else {
+								err();
+							}
+						}));
+					}
+
+					var tryfinish = function() {
+						var val = mission.FinishConditionValue;
+						switch (mission.FinishCondition) {
+							case 1:	// finishmap: mapid & grade				=> map:uid:{mapid:bitmap[4~8]}
+								db.hget('map:'+uid, mapid, check(function(mapmission){
+									for (var i=val; i>0; i--) {
+										if (mapmission | (4<<i)) {
+											getreward();
+											return;
 										}
 									}
-									if (cnt >= val) {
-										givereward(ms, done);
+									err();
+								}));
+								break;
+							case 2:	// finishmap: team: 4 girls				=> gamestat:{teamof4:<int>}
+								checkstat('teamof4', val);
+								break;
+							case 3:	// evolvegirl: n evolved girls			=> gamestat:{evolve:<int>}
+								checkstat('evolve', val);
+								break;
+							case 4:	// finishmap: n fights (sp or mp)		- record num of fights	gamestat:{sp:<int>,mp:<int>}
+								db.hmget('gamestat:'+uid, ['sp','mp'], checklist(2, function(sp_mp){
+									if (Math.floor(sp_mp[0]) + Math.floor(sp_mp[1]) >= val) {
+										getreward();
 									} else {
 										err();
 									}
 								}));
 								break;
-							case 4:	// finishmap: n fights (sp or mp)		- record num of fights	mapstat:{sp:<int>,mp:<int>}
+							case 5:	// finishmap: n kills					- record num kills		gamestat:{kill:<int>}
+								checkstat('kill', val);
 								break;
-							case 5:	// finishmap: n kills					- record num kills		mapstat:{kill:<int>}
+							case 6:	// useitem: use medal					=> gamestat:{usemedal:<int>}
+								checkstat('usemedal', 1);
 								break;
-//							case 6:	// useitem: use medal					=> no condition
-//								break;
-//							case 7:	// finishmap: challange map score > n	=> no condition
-//								break;
+							case 7:	// finishmap: challange map score > n	=> gamestat:{maxscore:<int>}
+								checkstat('maxscore', val);
+								break;
 							case 8:	// finishmap: n mp fights				- record num of fights 
+								checkstat('mp', val);
 								break;
-							case 9:	// finishmap: kill n exboss				- record num of exboss killed	mapstat:{exboss:<int>}
+							case 9:	// finishmap: kill n exboss				- record num of exboss killed	gamestat:{exboss:<int>}
+								checkstat('exboss', val);
 								break;
-							case 10:// finishmap: score < n
+							case 10:// finishmap: score rank <= n
+								checkstat('scorerank', val, true);
 								break;
-							case 11:// finishmap: contrib < n
+							case 11:// finishmap: contrib rank <= n
+								checkstat('contribrank', val, true);
 								break;
 							default:// no condition
-								givereward(ms, done);
+								givereward();
 								break;
 						}
 					}
-					if (isfinished(mstate, i)) {	// already finished
+
+					var s = getstate(mstate, id);
+					if ((wantreward && s>1) || (!wantreward && s>0)) {	// already finished
 						sendnil();
 						return;
 					}
@@ -2489,7 +2594,7 @@ wss.on('connection', function(ws) {
 							}));
 							break;
 						case 2:	// mission finished
-							if (isfinished(mstate, val-Const.MISSION_ID_OFFSET)) {	// can start
+							if (getstate(mstate, val) > 0) {	// can start
 								// can finish
 								tryfinish();
 							} else {
@@ -2497,13 +2602,14 @@ wss.on('connection', function(ws) {
 							}
 							break;
 						default:	// no condition
+							tryfinish();
 							break;
 					}
-				}));
+				});
 			});
 			break;
-		case 'getmapreward':
-			//@cmd getmapreward
+		case 'getMapReward':
+			//@cmd getMapReward
 			//@data id
 			//@desc 领取地图任务奖励
 			getuser(function(user, uid){
@@ -2660,8 +2766,10 @@ wss.on('connection', function(ws) {
 									var itemids = [];
 									for (var itemid in items) {
 										// check item type
-										if (table.item[itemid].Type != 4) {
-											itemids.push(itemid);
+										if (table.item.hasOwnProperty(itemid)) {
+											if (table.item[itemid].Type != 4) {
+												itemids.push(itemid);
+											}
 										}
 									}
 
@@ -2681,22 +2789,26 @@ wss.on('connection', function(ws) {
 													var val = map['RequirementValue'+j];
 													switch (map['StarRequirement'+j]) {
 														case 1:
-															if (!val || kill > val) {
+															var k = Math.floor(info.kill*100/info.enemy);
+															if (!val || k > val) {
 																mstate |= 1;
 															}
 															break;
 														case 2:
-															if (!val || hp > val) {
+															if (!val || info.hp > val) {
 																mstate |= 2;
 															}
 															break;
 														case 3:
 															if (!val || grade<=val) {
-																mstate |= 7;
+																mstate |= 4;
 															}
 															break;
 													}
 												}
+
+												// grade (bit 4-8)
+												mstate |= 4<<grade;
 
 												var newmission = mapmission | mstate;
 												if (first || newmission != mapmission) {
@@ -2786,7 +2898,7 @@ wss.on('connection', function(ws) {
 
 								trans.hmset('item', itemcounts, check(function(){
 									try {
-										addgirl(trans, uid, buygirl(), Const.GIRL_PRICE);
+										addgirl(trans, buygirl(), Const.GIRL_PRICE);
 									} catch (e) {
 										senderr('buygirl_err');
 									}
@@ -2794,7 +2906,7 @@ wss.on('connection', function(ws) {
 							}));
 						} else {
 							try {
-								addgirl(trans, uid, buygirl(), Const.GIRL_PRICE);
+								addgirl(trans, buygirl(), Const.GIRL_PRICE);
 							} catch (e) {
 								senderr('buygirl_err');
 							}
@@ -3151,7 +3263,7 @@ wss.on('connection', function(ws) {
 					.hset('redeemowner', newRole.Redeem, uid)			//redeem info
 					.zadd('rolelv', 1, uid)		// add to level:1 set
 					.exec(check(function(){
-						sendnil();
+						addDefaultGirl(uid, sendnil);
 					}));
 				}));
 			}));
@@ -3316,7 +3428,7 @@ wss.on('connection', function(ws) {
 							.hset('redeemowner', newRole.Redeem, uid)
 							.zadd('rolelv', 1, uid)	// add to level:1 set
 							.exec(check(function(){
-								sendnil();
+								addDefaultGirl(uid, sendnil);
 							}));
 						}));
 					}));
@@ -3419,7 +3531,7 @@ wss.notify = function (uid, datastr) {
 
 wss.sendcmd = function (uid, cmd) {
 	var ws = uid2ws[uid];
-	if (ws) {
+	if (ws && ws.readyState == ws.OPEN) {
 		ws.send(JSON.stringify({cmd:cmd}));
 		console.log('send cmd %s to %s', cmd, uid);
 	} else {

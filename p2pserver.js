@@ -32,6 +32,9 @@ server.on('message', function (msg, remote) {
 		var uid = msg.readInt32LE(2);
 		endpoints[uid] = remote;
 		server.send(msg, 0, msg.length, remote.port, remote.address);
+
+		console.log(remote);
+
 	} else if (type == MsgType.UNREG) {
 		var uid = msg.readInt32LE(2);
 		delete endpoints[uid];
@@ -52,9 +55,13 @@ server.on('message', function (msg, remote) {
 		var uid = msg.readInt32LE(6);
 		var ep = endpoints[uid];
 		if (ep) {
+			/*
 			if (type == MsgType.MSG) {
 				console.log('msg -> %s', uid);
+			} else {
+				console.log('relay', uid, ep);
 			}
+			*/
 			server.send(msg, 0, msg.length, ep.port, ep.address);
 		}
 	}
