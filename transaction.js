@@ -58,7 +58,6 @@ Transaction.prototype.exec = function (cb) {
 	var self = this;
 	if (this.mul) {
 		this.mul.exec(function(err, vals){
-			this.mul = null;
 			if (!err && vals.length == self.keys.length) {
 				for (var i=0; i<self.keys.length; i++) {
 					var key = self.keys[i];
@@ -84,6 +83,7 @@ Transaction.prototype.exec = function (cb) {
 				cb(err,vals);
 			}
 		});
+		this.mul = null;
 	}
 }
 

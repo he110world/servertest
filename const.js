@@ -73,6 +73,10 @@ Const.prototype.SCORE_GIFT = function (rank) {
 }
 
 Const.prototype.CONTRIB_GIFT = function (rank) {
+	if (rank === null) {
+		return null;
+	}
+
 	if (rank > 30000)		return 14045;
 	else if (rank > 20000)	return 14044;
 	else if (rank > 12000) 	return 14043;
