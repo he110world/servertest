@@ -4,11 +4,9 @@ SET_Score,{"cmd":"SET_Score";"data":{"score":{0}};"session":{1}},设置得分（
 ADD_Contrib,{"cmd":"ADD_Contrib";"data":{"contrib":{0}};"session":{1}},增加贡献值
 RESET_ScoreBoard,{"cmd":"RESET_ScoreBoard"},重置得分排行榜
 RESET_ContribBoard,{"cmd":"RESET_ContribBoard"},重置贡献值排行榜
-get_scoreboard,{"cmd":"get_scoreboard";"session":{0}},获取得分排行榜
-get_contribboard,{"cmd":"get_contribboard";"session":{0}},获取贡献度排行榜
-get_score_gift,{"cmd":"get_score_gift";"session":{0}},获取积分奖励
-get_contrib_gift,{"cmd":"get_contrib_gift";"session":{0}},获取贡献值奖励
-get_ranks,{"cmd":"get_ranks";"session":{0}},获取自己的积分和贡献度排名: ScoreRank 和 ContribRank
+getboard,{"cmd":"getboard";"data":{"type ":{0}};"session":{1}},获取排行榜	(type: "score" or "contrib")
+getboardgift,{"cmd":"getboardgift";"session":{0}},获取排行榜奖励
+getrank,{"cmd":"getrank";"session":{0}},获取自己的积分和贡献度排名: role:{board:{ScoreRank 和 ContribRank}}
 setroomteam,{"cmd":"setroomteam";"data":{"teamid":{0}};"session":{1}},选择多人模式出击战姬
 webrecruit,{"cmd":"webrecruit";"data":{"roomid":{0};"lvmin":{1};"lvmax":{2};"mapid":{3}};"session":{4}},组队募集
 makeroom,{"cmd":"makeroom";"data":{"mapid":{0}};"session":{1}},开房间
@@ -42,9 +40,8 @@ evolvegirl,{"cmd":"evolvegirl";"data":{"girlid":{0}};"session":{1}},战姬进化
 setequip,{"cmd":"setequip";"data":{"girlid":{0};"equipidx":{1};"pos":{2}};"session":{3}},战姬穿装备(e.g. setequip 130001 20 3)
 sellequips,{"cmd":"sellequips";"data":{"equipidx":{0}};"session":{1}},卖掉装备（参数：装备index数组）
 addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
-finishMission,{"cmd":"finishMission";"data":{"id":{0}};"session":{1}},标记任务完成（尚未领取奖励）
 getMissionReward,{"cmd":"getMissionReward";"data":{"id":{0}};"session":{1}},领取任务奖励
-getmapreward,{"cmd":"getmapreward";"data":{"id":{0}};"session":{1}},领取地图任务奖励
+getMapReward,{"cmd":"getMapReward";"data":{"id":{0}};"session":{1}},领取地图任务奖励
 finishmap,{"cmd":"finishmap";"data":{"info":{0}};"session":{1}},地图过关（mapid:rank$count）
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
 setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
