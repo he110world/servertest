@@ -26,7 +26,7 @@ requestfriend,{"cmd":"requestfriend";"data":{"target":{0}};"session":{1}},求加
 delfriend,{"cmd":"delfriend";"data":{"target":{0}};"session":{1}},删除好友(target为用户ID)
 acceptfriend,{"cmd":"acceptfriend";"data":{"target":{0}};"session":{1}},接受好友请求
 declinefriend,{"cmd":"declinefriend";"data":{"target":{0}};"session":{1}},拒绝好友请求
-followfriend,{"cmd":"followfriend";"data":{"target ":{0};"follow":{1}};"session":{2}},关注好友（follow=1：关注，follow=0：取消关注）
+followfriend,{"cmd":"followfriend";"data":{"target":{0};"follow":{1}};"session":{2}},关注好友（follow=1：关注，follow=0：取消关注）
 friendbrief,{"cmd":"friendbrief";"data":{"uids":{0}};"session":{1}},好友简要信息（参数：uid$uid$uid...  返回:用户名 等级 队长 最后时间）
 frienddetail,{"cmd":"frienddetail";"data":{"target":{0}};"session":{1}},好友详细信息
 usegift,{"cmd":"usegift";"data":{"index":{0}};"session":{1}},领取礼包
