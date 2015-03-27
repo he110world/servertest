@@ -248,7 +248,6 @@ Transaction.prototype.zincrby = function (key, incr, member, cb) {
 Transaction.prototype.hmset = function (key, mobj, cb) {
 	var fullkey = key+':'+this.uid;
 	merge(this.obj, key, mobj); // don't wait for result : it's already known
-	console.log('hmset',this.mul,this.cli,fullkey,mobj);
 	if (this.mul) {
 		this.mul.hmset(fullkey, mobj);
 		this.skipkey();

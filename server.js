@@ -444,23 +444,31 @@ wss.on('connection', function(ws) {
 		function getRanks (trans, uid, cb) {
 			db.zrevrank('score', uid, check(function(scorerank){
 				db.zrevrank('contrib', uid, check(function(contribrank){
-					trans.client().set('ScoreRank', scorerank);
-					trans.client().set('ContribRank', contribrank);
+					trans.client().hmset('role', {board:{ScoreRank:scorerank, ContribRank:contribrank}});
 					cb();
 				}));
 			}));
 		}
 
 		function incrGameStat (trans, obj, cb) {
-			for (var i in obj) {
-//				trans.hincrby('gamestat', i, obj[i], 
-			}
+			Object.keys(obj).forEach(function(key, i){
+				trans.hincrby('gamestat', key, obj[key], check(function(){
+					if (i == keys.length) {
+						cb();
+					}
+				}));
+			});
 		}
 
-		function setMissionState (trans, keyname, mstate, cb) {
+		function setMissionState (trans, keyname, statebits, cb) {
+			db.hset(keyname, trans.uid, statebits, check(function(){
+				var clientkey = keyname.split(':')[0];
+				trans.client.set(clientkey, statebits);
+				cb();
+			}));
 		}
 
-		function getMissionState (mission, cb) {
+		function getMissionState (timeType, cb) {
 			// mission type
 			// 1 - once
 			// 2 - daily
@@ -468,11 +476,11 @@ wss.on('connection', function(ws) {
 			// 4 - monthly
 			// refreshed at 5 a.m.
 			var keyname;
-			if (mission.TimeType == 1) {	// once
+			if (timeType == 1) {	// once
 				keyname = 'once';
 			} else {
 				var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
-				switch (mission.TimeType) {
+				switch (timeType) {
 					case 2:	// daily
 						keyname = 'daily:'+time.format('YYYYMMDD');
 						break;
@@ -489,8 +497,8 @@ wss.on('connection', function(ws) {
 				return;
 			}
 
-			db.hget(keyname, uid, check(function(mstate){
-				cb(keyname, mstate);
+			db.hget(keyname, uid, check(function(statebits){
+				cb(keyname, statebits);
 			}));
 		}
 
@@ -602,7 +610,7 @@ wss.on('connection', function(ws) {
 		function addRoleExp(trans, expinc, cb) {
 			var uid = trans.uid;
 			var query = ['Lv', 'RoleExp'];
-			db.hmget('role:'+uid, query, checklist(2,function(data){
+			db.hmget('role:'+uid, query, checklist(query.length,function(data){
 				var role = new Role(table);
 				var oldLv = data[0];
 				role.Lv = oldLv;
@@ -735,155 +743,139 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function finishgetboard (board, ranges) {
-			var cnt = 0;
-			var finallist = [];
-			var datalist = [];
-			var obj = {};
-			obj[board] = finallist;
-			if (ranges.length === 0) {
-				sendobj(obj);
-				return;
-			}
+		function getBoardPlayers (board, r0, r1, cb) {
+			db.zrevrange(board, r0, r1, 'withscores', check(function(uid_scores){
+				var len = uid_scores.length;
+				var players = [];
+				if (len == 0) {
+					cb(players);
+					return;
+				}
 
-			for (var i=0; i<ranges.length; i+=2) {
-				db.zrevrange(board, ranges[i], ranges[i+1], 'withscores', check(function(uid_scores){
-					cnt += 2;
-					datalist.push(uid_scores);
-					if (cnt == ranges.length) {	// done!
-						for (var j=0; j<datalist.length; j++) {
-							var sublist = datalist[j];
-							var rankmin = ranges[j*2];
-							for (var k=0; k<sublist.length; k+=2) {	// [uid, score, uid, score ...]
-								var player =  {ID: sublist[k], Score: sublist[k+1], Rank: rankmin++};
-								finallist.push(player);
+				for (var i=0; i<len; i+=2) {
+					players.push({ID: uid_scores[i], Score: Math.floor(uid_scores[i+1]), Rank: r0+i/2});
+				}
+
+				// Girl & Nickname
+				players.forEach(function(player, i){
+					db.hget('role:'+player.ID, 'nickname', check(function(nick){
+						db.lindex('team.1:'+player.ID, 0, check(function(girlid){
+							player.Nick = nick;
+							player.Girl = girlid;
+
+							if (i == players.length-1) {
+								cb(players);
 							}
-						}
-
-						// role:<uid>.nickname, team.1:uid
-						cnt = 0;
-						finallist.forEach(function(player, j){
-							db.hget('role:'+finallist[j].ID, 'nickname', check(function(nick){
-								db.lindex('team.1:'+finallist[j].ID, 0, check(function(girlid){
-									++cnt;
-									finallist[j].Nick = nick;
-									finallist[j].Girl = girlid;
-
-									if (cnt ==finallist.length) {
-										sendobj(obj);
-									}
-								}));
-							}));
-						});
-					}
-				}));
-			}
+						}));
+					}));
+				});
+			}));
 		}
 
-		// board player info: {ID:<uid>, Nick:<nickname>, Rank:<rank>, Girl:<girl>, Score:<score>}
+		function sendBoard (board, players) {
+			// process equal scores
+			for (var i=1, len=players.length; i<len; i++) {
+				var p = players[i];
+				var prev = players[i-1]
+				if (p.Score == prev.Score) {
+					p.Rank = prev.Rank;
+				}
+			}
+			var obj = {};
+			obj[board] = players;
+			sendobj({role:{board:obj}});
+		}
+
+		// board player info: {ID:<uid>, Rank:<rank>, Score:<score>, Girl:<girl>, Nick:<nickname>}
 		// return [board_player_info]
 		// temp struct: {<uid>:board_player_info}
-		function getboard (board, cap) {
-			getuser(function(user,uid){
-				db.zcard(board, check(function(count){	// board size
-					if (!count) {	// empty board
-						finishgetboard(board, []);
-						return;
+		function getboard (board) {
+			var cap;
+			if (board == 'score') {
+				cap = Const.SCORE_RANK_MAX - 1;
+			} else if (board == 'contrib') {
+				cap = Const.CONTRIB_RANK_MAX - 1;
+			} else {
+				senderr('msg_err');
+				return;
+			}
+			getuser(function(user, uid){
+				db.zrevrank(board, uid, check(function(myrank){	// my rank
+					if (myrank === null) {	// not on board
+						myrank = 99999999;
+					}
+					var r0, r1 = myrank;
+					var gettop10 = false;
+					if (myrank < 20) {
+						r0 = 0;
+						if (myrank < 9) {
+							r1 = 9;
+						}
+					} else {
+						if (myrank > cap) {	// not on board => bottom 10
+							r1 = cap;
+							r0 = cap - 9;
+						} else {
+							r0 = myrank - 9;
+						}
+						gettop10 = true;
 					}
 
-					db.zrevrank(board, uid, check(function(myrank){
-						// get query list
-						var ranges = [];
-						var boardmax = Math.min(cap, count)-1;
-						if (myrank === null) {
-							myrank = boardmax + 1;
+					// get data
+					getBoardPlayers(board, r0, r1, function(players){
+						if (gettop10) {
+							// not in top20
+							getBoardPlayers(board, 0, 9, function(topplayers){
+								sendBoard(board, topplayers.concat(players));
+							});
+						} else {
+							// in top20
+							sendBoard(board, players);
 						}
-
-						// self
-						if (myrank <= boardmax) {	// have rank
-
-							// max(0, myrank-9) -> myrank
-							ranges.push([Math.max(0, myrank-9),1], [myrank,-1]);
-						}
-
-						// others
-		//				if (myrank > 9) {	// not in top10
-							// top
-							// 0 -> min(9, boardmax)
-							ranges.push([0,1], [Math.min(9,boardmax),-1]);
-
-
-							// bottom
-							// max(0, boardmax-9) -> boardmax
-							ranges.push([Math.max(0, boardmax-9),1], [boardmax,-1]);
-		//				}
-
-						ranges.sort(function(a,b){
-							return a[0]-b[0];
-						});
-
-						var open = 0;
-						var merged = [];
-						for (var i=0; i<ranges.length; i++) {
-							var r = ranges[i];
-							if (r[1] > 0) {
-								if (open == 0) {
-									if (i > 0 && merged[merged.length-1] == r[0]) {	// e.g. [1,2,2,3] => [1,3]
-										merged.pop();
-									} else {
-										merged.push(r[0]);
-									}
-								}
-								++open;
-							} else {
-								--open;
-								if (open == 0) {
-									merged.push(r[0]);
-								}
-							}
-						}
-						finishgetboard(board, merged);
-					}));
+					});
 				}));
 			});
 		}
 
-		function getboardgift (board) {
-			getuser(function(user,uid){
-				// already get the gift?
-				db.getbit(board+'_gift', uid, check(function(got){
-					if (got) {
-						sendnil();
-					} else {
-						// on last leaderboard?
-						db.zrevrank(board+'_last', uid, check(function(rank){
-							// set state to 'checked'
-							db.setbit(board+'_gift', uid, 1, check(function(){
-								var giftid;
-								if (board == 'score') {
-									giftid = Const.SCORE_GIFT(rank);
-								} else if (board == 'contrib') {
-									giftid = Const.CONTRIB_GIFT(rank);
-								}
-								if (!giftid) {
-									sendnil();
-									return;
-								}
+		function getboardgift (trans, board, cb) {
+			// already get the gift?
+			db.getbit(board+'_gift', uid, check(function(got){
+				if (got) {
+					cb();
+				} else {
+					// on last leaderboard?
+					db.zrevrank(board+'_last', uid, check(function(rank){
+						// set state to 'checked'
+						db.setbit(board+'_gift', uid, 1, check(function(){
+							var giftid, key;
+							if (board == 'score') {
+								giftid = Const.SCORE_GIFT(rank);
+								key = 'ScoreRank0';
+							} else if (board == 'contrib') {
+								giftid = Const.CONTRIB_GIFT(rank);
+								key = 'ContribRank0';
+							}
+							if (!giftid) {
+								// clear ScoreRank0 & ContribRank0
+								trans.hdel('role.board', key, check(function(){
+									cb();
+								}));
+								return;
+							}
 
-								db.incr('next_gift_id:'+uid, check2(function(index){	// two gifts for existing girl
-									var trans = new Transaction(db, uid);
-									trans.multi()
-									.hset('role', 'OldRank', rank)
-									.hsetjson('gift', index, new Gift(giftid))
-									.exec(check(function(){
-										sendobj(trans.obj);
-									}));
+							db.incr('next_gift_id:'+uid, check2(function(index){	// two gifts for existing girl
+								var trans = new Transaction(db, uid);
+								trans.multi()
+								.hset('role.board', key, rank)
+								.hsetjson('gift', index, new Gift(giftid))
+								.exec(check(function(){
+									cb();
 								}));
 							}));
 						}));
-					}
-				}));
-			});
+					}));
+				}
+			}));
 		}
 
 		function getlvrange (lv) {
@@ -1015,29 +1007,36 @@ wss.on('connection', function(ws) {
 			//@desc 重置贡献值排行榜
 			resetboard('contrib');
 			break;
-		case 'get_scoreboard':
-			//@cmd get_scoreboard
-			//@desc 获取得分排行榜
-			getboard('score', 5000);
+		case 'getboard':
+			//@cmd getboard
+			//@data type 
+			//@desc 获取排行榜	(type: "score" or "contrib")
+			try {
+				var type = msg.data.type;
+				if (type != 'score' && type != 'contrib') {
+					throw new Error();
+				}
+			} catch (e) {
+				senderr('param_err');
+				return;
+			}
+			getboard(type);
 			break;
-		case 'get_contribboard':
-			//@cmd get_contribboard
-			//@desc 获取贡献度排行榜
-			getboard('contrib', 30000);
+		case 'getboardgift':
+			//@cmd getboardgift
+			//@desc 获取排行榜奖励
+			getuser(function(user, uid){
+				var trans = new Transaction(db, uid);
+				getboardgift(trans, 'score', function(){
+					getboardgift(trans, 'contrib', function(){
+						sendobj(trans.obj);
+					});
+				});
+			});
 			break;
-		case 'get_score_gift':
-			//@cmd get_score_gift
-			//@desc 获取积分奖励
-			getboardgift('score', 5000);
-			break;
-		case 'get_contrib_gift':
-			//@cmd get_contrib_gift
-			//@desc 获取贡献值奖励
-			getboardgift('contrib', 30000);
-			break;
-		case 'get_ranks':
-			//@cmd get_ranks
-			//@desc 获取自己的积分和贡献度排名: ScoreRank 和 ContribRank
+		case 'getrank':
+			//@cmd getrank
+			//@desc 获取自己的积分和贡献度排名: role:{board:{ScoreRank 和 ContribRank}}
 			getuser(function(user, uid){
 				var trans = new Transaction(db, uid);
 				getRanks(trans, uid, function(){
@@ -2095,7 +2094,8 @@ wss.on('connection', function(ws) {
 				try {
 					var shopid = msg.data.shopid;
 					var shop = table.shop[shopid];
-					if (!shop) {
+					var item = table.item[shop.ItemID];
+					if (!shop || !item) {
 						senderr('wrong_shop_err');
 						return;
 					}
@@ -2105,15 +2105,25 @@ wss.on('connection', function(ws) {
 
 				var money = 12000 + shop.Type;
 				if (money == 12004) {	// TODO: RMB
-					var trans = new Transaction(db, uid);
-					trans.hincrby('item', shop.ItemID, shop.Num, check(function(){
-						sendobj(trans.obj);
+					db.hget('item:'+uid, money, check(function(cnt){
+						if (Math.floor(cnt) + Math.floor(shop.Num) > item.Limit) {
+							senderr('limit_err');
+						} else {
+							var trans = new Transaction(db, uid);
+							trans.hincrby('item', shop.ItemID, shop.Num, check(function(){
+								sendobj(trans.obj);
+							}));
+						}
 					}));
 				} else {
-					db.hget('item:'+uid, money, check(function(hasmoney){
+					db.hmget('item:'+uid, [money, shop.ItemID], check(function(data){
+						var hasmoney = data[0];
+						var cnt = data[1];
 						var cost = shop[money+'Shop'];
 						if (cost > hasmoney) {
 							senderr('not_enough_item_err');
+						} else if (Math.floor(cnt) + Math.floor(shop.Num) > item.Limit) {
+							senderr('limit_err');
 						} else {
 							var trans = new Transaction(db, uid);
 							trans.multi()
@@ -2466,19 +2476,32 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				getMissionState(mission, function(missionkey, mstate){
-					var getstate = function(state, missionid) {
+				getMissionState(mission.TimeType, function(missionkey, statebits){
+					var isfinished = function(state, missionid) {
 						var idx = missionid - Const.MISSION_ID_OFFSET;
-						if (mstate) {
-							return mstate[idx];
+						if (state) {
+							return state[idx] > 0;
 						} else {
-							return 0;
+							return false;
 						}
+					}
+
+					var setfinished = function(state, missionid) {
+					}
+
+					// already finished
+					if (isfinished(statebits, id)) {
+						senderr('mission_err');
+						return;
 					}
 
 					var getreward = function() {
 						var trans = new Transaction(db, uid);
-						setMissionState(trans, missionkey, mstate, function(){
+
+						// update mstate
+//						mstate[missionid - Const.MISSION_ID_OFFSET] = 1;
+
+						setMissionState(trans, missionkey, statebits, function(){
 							var type = Math.floor(mission.ItemID/1000);
 							switch (type) {
 								case 10:	// girl
@@ -2576,12 +2599,6 @@ wss.on('connection', function(ws) {
 						}
 					}
 
-					var s = getstate(mstate, id);
-					if ((wantreward && s>1) || (!wantreward && s>0)) {	// already finished
-						sendnil();
-						return;
-					}
-
 					var val = mission.StartConditionValue;
 					switch (mission.StartCondition) {
 						case 1:	// mapid finished
@@ -2595,7 +2612,7 @@ wss.on('connection', function(ws) {
 							}));
 							break;
 						case 2:	// mission finished
-							if (getstate(mstate, val) > 0) {	// can start
+							if (isfinished(statebits, val)) {	// can start
 								// can finish
 								tryfinish();
 							} else {
@@ -2821,31 +2838,60 @@ wss.on('connection', function(ws) {
 												}
 											}
 
-											var done = function () {
+											var doneInfinite = function (contrib, score) {
 												// incr map count
-											//	trans.hincrby('map', mapid+':cnt', 1, check(function(){
+												trans.hincrby('map', mapid+':cnt', 1, check(function(){
 													// check map mission
 													updateMapMission(function(){
-														getRanks(trans, uid, function(){
-															sendobj(trans.obj);
-														});
-													});
-											//	});
-											}
-											var contrib = Math.ceil(score/1000);
-											trans.zincrby('contrib', contrib, uid, check(function(newcontrib){
-												// update score board	-- score
-												db.zscore('score', uid, check(function(oldscore){
-													if (score > oldscore) {
-														db.zadd('score', score, uid, check(function(){
-															trans.client().set('score', score);
-															done();
+														// update max contrib & max score
+														db.hmget('role.board:'+uid, ['ScoreMax', 'ContribMax'], check(function(highscores){
+															var high = {};
+															if (contrib > highscores[1]) {
+																high.ContribMax = contrib;
+															}
+															if (score > highscores[0]) {
+																high.ScoreMax = score;
+															}
+
+															if (Object.keys(high).length > 0) {
+																trans.hmset('role.board', high, check(function(){
+																	sendobj(trans.obj);
+																}));
+															} else {
+																sendobj(trans.obj);
+															}
 														}));
-													} else {
-														done();
-													}
+													});
 												}));
-											}));
+											}
+
+											var done = function () {
+												trans.hincrby('map', mapid+':cnt', 1, check(function(){
+													// check map mission
+													updateMapMission(function(){
+														sendobj(trans.obj);
+													});
+												}));
+											}
+
+											if (map.Type == Const.INFINITE_MODE_TYPE) {
+												var contrib = Math.ceil(score/1000);
+												trans.zincrby('contrib', contrib, uid, check(function(newcontrib){
+													// update score board	-- score
+													db.zscore('score', uid, check(function(oldscore){
+														if (score > oldscore) {
+															// update max score
+															db.zadd('score', score, uid, check(function(){
+																doneInfinite(newcontrib, score);
+															}));
+														} else {
+															doneInfinite(newcontrib, score);
+														}
+													}));
+												}));
+											} else {	// normal mode
+												done();
+											}
 										}));
 									});
 								});
@@ -3262,9 +3308,14 @@ wss.on('connection', function(ws) {
 					.hmset('handover:'+uid, handover)
 					.hset('handover2uid', handover.ID, udid+'$'+uid)	//handoverID:udid$uid
 					.hset('redeemowner', newRole.Redeem, uid)			//redeem info
-					.zadd('rolelv', 1, uid)		// add to level:1 set
 					.exec(check(function(){
-						addDefaultGirl(uid, sendnil);
+						db.zadd('rolelv', 1, uid, check(function(){	// add to level:1 set
+							db.zadd('score', 0, uid, check(function(){	// add to score & contrib board
+								db.zadd('contrib', 0, uid, check(function(){
+									addDefaultGirl(uid, sendnil);
+								}));
+							}));
+						}))		
 					}));
 				}));
 			}));

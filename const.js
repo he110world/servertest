@@ -16,6 +16,9 @@ function Const () {
 	this.MAX_FRIENDS = 50;
 	this.MISSION_RESET_HOUR = 5;
 	this.MISSION_ID_OFFSET = 15000;
+	this.SCORE_RANK_MAX = 5000;
+	this.CONTRIB_RANK_MAX = 30000;
+	this.INFINITE_MODE_TYPE = 6;
 }
 
 //we need: 1. last login date 2. last gift id
