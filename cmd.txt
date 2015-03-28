@@ -1,12 +1,13 @@
 id,cmd,desc
 echo,{"cmd":"echo"},返回客户端发送的数据
+INCR_GameState,{"cmd":"INCR_GameState";"data":{"state":{0};"incr":{1}};"session":{2}},增加游戏状态数值
+SET_GameState,{"cmd":"SET_GameState";"data":{"state":{0};"val":{1}};"session":{2}},设置游戏状态数值
 SET_Score,{"cmd":"SET_Score";"data":{"score":{0}};"session":{1}},设置得分（如果得分比当前分数低则忽略）
-ADD_Contrib,{"cmd":"ADD_Contrib";"data":{"contrib":{0}};"session":{1}},增加贡献值
 RESET_ScoreBoard,{"cmd":"RESET_ScoreBoard"},重置得分排行榜
 RESET_ContribBoard,{"cmd":"RESET_ContribBoard"},重置贡献值排行榜
-getboard,{"cmd":"getboard";"data":{"type ":{0}};"session":{1}},获取排行榜	(type: "score" or "contrib")
+getboard,{"cmd":"getboard";"data":{"type":{0}};"session":{1}},获取排行榜(type: "score" or "contrib")
 getboardgift,{"cmd":"getboardgift";"session":{0}},获取排行榜奖励
-getrank,{"cmd":"getrank";"session":{0}},获取自己的积分和贡献度排名: role:{board:{ScoreRank 和 ContribRank}}
+getrank,{"cmd":"getrank";"session":{0}},获取自己的积分和贡献度排名:role:{board:{ScoreRank 和 ContribRank}}
 setroomteam,{"cmd":"setroomteam";"data":{"teamid":{0}};"session":{1}},选择多人模式出击战姬
 webrecruit,{"cmd":"webrecruit";"data":{"roomid":{0};"lvmin":{1};"lvmax":{2};"mapid":{3}};"session":{4}},组队募集
 makeroom,{"cmd":"makeroom";"data":{"mapid":{0}};"session":{1}},开房间
@@ -27,29 +28,30 @@ delfriend,{"cmd":"delfriend";"data":{"target":{0}};"session":{1}},删除好友(t
 acceptfriend,{"cmd":"acceptfriend";"data":{"target":{0}};"session":{1}},接受好友请求
 declinefriend,{"cmd":"declinefriend";"data":{"target":{0}};"session":{1}},拒绝好友请求
 followfriend,{"cmd":"followfriend";"data":{"target":{0};"follow":{1}};"session":{2}},关注好友（follow=1：关注，follow=0：取消关注）
-friendbrief,{"cmd":"friendbrief";"data":{"uids":{0}};"session":{1}},好友简要信息（参数：uid$uid$uid...  返回:用户名 等级 队长 最后时间）
+friendbrief,{"cmd":"friendbrief";"data":{"uids":{0}};"session":{1}},好友简要信息（参数：uid$uid$uid...返回:用户名 等级 队长 最后时间）
 frienddetail,{"cmd":"frienddetail";"data":{"target":{0}};"session":{1}},好友详细信息
 usegift,{"cmd":"usegift";"data":{"index":{0}};"session":{1}},领取礼包
 useallgifts,{"cmd":"useallgifts";"session":{0}},领取全部礼包
-useitem,{"cmd":"useitem";"data":{"id":{0};"targetid":{1};"cnt":{2}};"session":{3}},使用物品(targetid可以是girl的id之类的值 cnt:数量，默认为1)
+useitem,{"cmd":"useitem";"data":{"id":{0};"targetid":{1};"cnt":{2}};"session":{3}},使用物品(targetid可以是girl的id之类的值cnt:数量，默认为1)
 redeem,{"cmd":"redeem";"data":{"code":{0}};"session":{1}},兑换码
-getactiveitem,{"cmd":"getactiveitem";"session":{0}},获取当前正在使用的道具{ID:id Timeout:ms}
+getactiveitem,{"cmd":"getactiveitem";"session":{0}},获取当前正在使用的道具{ID:idTimeout:ms}
 sellitem,{"cmd":"sellitem";"data":{"itemid":{0};"count":{1}};"session":{2}},卖道具
 buyitem,{"cmd":"buyitem";"data":{"shopid":{0}};"session":{1}},买物品
 evolvegirl,{"cmd":"evolvegirl";"data":{"girlid":{0}};"session":{1}},战姬进化
-setequip,{"cmd":"setequip";"data":{"girlid":{0};"equipidx":{1};"pos":{2}};"session":{3}},战姬穿装备(e.g. setequip 130001 20 3)
+setequip,{"cmd":"setequip";"data":{"girlid":{0};"equipidx":{1};"pos":{2}};"session":{3}},战姬穿装备(e.g.setequip 130001 20 3)
 sellequips,{"cmd":"sellequips";"data":{"equipidx":{0}};"session":{1}},卖掉装备（参数：装备index数组）
 addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
-getMissionReward,{"cmd":"getMissionReward";"data":{"id":{0}};"session":{1}},领取任务奖励
-getMapReward,{"cmd":"getMapReward";"data":{"id":{0}};"session":{1}},领取地图任务奖励
+getmissionrwd,{"cmd":"getmissionrwd";"data":{"id":{0}};"session":{1}},领取任务奖励
+getmaprwd,{"cmd":"getmaprwd";"data":{"id":{0}};"session":{1}},领取地图任务奖励
 finishmap,{"cmd":"finishmap";"data":{"info":{0}};"session":{1}},地图过关（mapid:rank$count）
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
-setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
+setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5;0=>no team)和位置(pos:0-3; index to array)
 logingift,{"cmd":"logingift";"session":{0}},尝试领取登录奖励
-view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：role girl room items girls friends pendingfriends follows team equip girlequip allgift maps（girl/team/equip需要用到id; allgift返回的是gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
+roommates,{"cmd":"roommates";"data":{"id":{0}};"session":{1}},获取房间玩家队伍信息
+view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：rolegirl room items girls friends pendingfriends follows team equip girlequip gift maps（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 regUDID,{"cmd":"regUDID";"data":{"udid":{0}}},注册用户
 loginUDID,{"cmd":"loginUDID";"data":{"udid":{0}}},登录
-getHandOverUid,{"cmd":"getHandOverUid";"data":{"handid":{0};"handpass":{1}}},获取交接目标userId 返回tmp:{handto:uid}
+getHandOverUid,{"cmd":"getHandOverUid";"data":{"handid":{0};"handpass":{1}}},获取交接目标userId返回tmp:{handto:uid}
 handOverUDID,{"cmd":"handOverUDID";"data":{"udid":{0};"handid":{1};"handpass":{2}}},账户交接
 setHandOverPass,{"cmd":"setHandOverPass";"data":{"pass":{0}};"session":{1}},设置交接账户密码
 reg,{"cmd":"reg";"data":{"user":{0};"pass":{1}}},注册用户
