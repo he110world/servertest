@@ -287,7 +287,7 @@ Transaction.prototype.hmsetjson = function (key, mobj, cb) {
 					cb(err,newval);
 				}
 			});
-		}d
+		}
 	}
 }
 

@@ -54,7 +54,7 @@ for (var i in lines) {
 			continue;
 		}
 
-		var data = line.slice(pos + tagsearch.length + 1);
+		var data = line.slice(pos + tagsearch.length + 1).replace(/[\s\t,]+/,'');
 		if (tag == 'cmd') {
 			if (currobj) {
 				cmdlist.push(currobj);

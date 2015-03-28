@@ -590,6 +590,10 @@ wss.on('connection', function(ws) {
 			});
 		}
 
+		function addTimeStamp(val) {
+			return Math.floor(val)+parseFloat((moment().diff(moment('20150301','YYYYMMDD'))/1e11).toFixed(8));
+		}
+
 		function addGift(trans, giftid, cb) {
 			if (!table.gift.hasOwnProperty(giftid)) {
 				cb();
@@ -603,24 +607,81 @@ wss.on('connection', function(ws) {
 		}
 
 		function addItem(trans, itemid, cnt, cb) {
-			if (!table.item[itemid]) {
+			var item = table.item[itemid];
+			if (item) {
+				// check limit
+				db.hget('item:'+trans.uid, itemid, check(function(oldcnt){
+					var newcnt = Math.floor(oldcnt) + Math.floor(cnt);
+					if (newcnt > item.Limit) {
+						newcnt = item.Limit;
+					}
+					var incrcnt = newcnt - oldcnt;
+					if (incrcnt > 0) {
+						trans.hincrby('item', itemid, incrcnt, check(cb));
+					} else {
+						cb();
+					}
+				}));
+			} else {
+				cb();
+			}
+		}
+
+		function addItems(trans, items, cb) {
+			if (!items) {
 				cb();
 				return;
 			}
-			trans.hincrby('item', itemid, cnt, check(function(){
-				cb();
-			}));
+			var itemids = Object.keys(items);
+			itemids.forEach(function(itemid, i){
+				addItem(trans, itemid, items[itemid], function(){
+					if (i == itemids.length - 1) {
+						cb();
+					}
+				});
+			});
 		}
 
-		function addEquip(trans, equipid, cb) {
+		function addEquip(trans, equipid, mapLv, cb) {
+			if (typeof mapLv === 'function') {
+				cb = mapLv;
+				mapLv = null;
+			}
+
 			if (!table.equip.hasOwnProperty(equipid)) {
 				cb();
 				return;
 			}
 			db.incr('next_equip_id:'+trans.uid, check(function(idx){
-				var equip = new Equip(table, equipid);
+				var equip = new Equip(table, equipid, mapLv);
 				trans.hsetjson('equip', idx, equip, check(function(){
 					cb();
+				}));
+			}));
+		}
+
+		function addEquips(trans, equips, mapLv, cb) {
+			if (typeof mapLv === 'function') {
+				cb = mapLv;
+				mapLv = null;
+			}
+
+			if (!equips) {
+				cb();
+				return;
+			}
+
+			db.get('next_equip_id:'+trans.uid, check(function(idx){
+				var addequips = {};
+				var oldidx = idx;
+				for (var id in equips) {
+					var cnt = equips[id];
+					for (var i=0; i<cnt; i++) {
+						addequips[++idx] = new Equip(table, id, mapLv);
+					}
+				}
+				trans.hmsetjson('equip', addequips, check(function(){
+					db.incrby('next_equip_id:'+trans.uid, idx-oldidx, check(cb));
 				}));
 			}));
 		}
@@ -649,7 +710,8 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function addGirlExp(trans, uid, girlid, expinc, cb) {
+		function addGirlExp(trans, girlid, expinc, cb) {
+			var uid = trans.uid;
 			var query = ['Lv', 'GirlExp', 'Rank'];
 			var girlkey = 'girl.'+girlid+':'+uid;
 			db.hmget(girlkey, query, checklist(3,function(data){
@@ -669,6 +731,73 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
+		function addTeamExp(trans, team, expinc, cb) {
+			db.lrange('team.'+team+':'+trans.uid,0,-1,check(function(girllist){
+				var cnt = girllist.length;
+				if (cnt == 0) {
+					senderr('team_err');
+				} else {
+					girllist.forEach(function(girlid,i){
+						addGirlExp(trans, girlid, expinc, function(){
+							if (i == cnt-1) {
+								cb();
+							}
+						});
+					});
+				}
+			}));
+		}
+
+		function updateMap(trans, mapid, info, cb) {
+			// map:uid {mapid:bitmap}
+			db.hget('map:'+trans.uid, mapid, check(function(mapmission){
+
+				// compute grade (S A B C D 1-5)-- map
+				var grade = getGrade(mapid, info.score);
+				trans.client().set('grade', grade);
+
+				// update map mission
+				var map = table.map[mapid];
+				var mstate = 0;
+				var first = mapmission === null;
+				mapmission = mapmission || 0;
+				for (var j=1; j<=3; j++) {
+					var val = map['RequirementValue'+j];
+					switch (map['StarRequirement'+j]) {
+						case 1:
+							var k = Math.floor(info.kill*100/info.enemy);
+							if (!val || k > val) {
+								mstate |= 1;
+							}
+							break;
+						case 2:
+							if (!val || info.hp > val) {
+								mstate |= 2;
+							}
+							break;
+						case 3:
+							if (!val || grade<=val) {
+								mstate |= 4;
+							}
+							break;
+					}
+				}
+
+				// grade (bit 4-8)
+				mstate |= 4<<grade;
+				var newmission = mapmission | mstate;
+				trans.hincrby('map', mapid+':cnt', 1, check(function(){	// incr map count
+					if (first || newmission != mapmission) {
+						trans.hset('map', mapid, newmission, check(function(){
+							cb();
+						}));
+					} else {
+						cb();
+					}
+				}));
+			}));
+		}
+
 		function addDefaultGirl (uid, cb) {
 			var girlid = Const.DEFAULT_GIRL;
 			var girl = new Girl;
@@ -683,7 +812,26 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function addgirl(trans, girlid, price, cb) {
+		function addGirls(trans, girls, cb) {
+			if (!girls) {
+				cb();
+				return;
+			}
+			var ids = Object.keys(girls);
+			var idcnt = ids.length;
+			ids.forEach(function(id, i){
+				var girlcnt = girls[id];
+				for (var j=0; j<girlcnt; j++) {
+					addGirl(trans, id, 0, function(){
+						if (i==idcnt-1 && j==girlcnt-1) {
+							cb();
+						}
+					});
+				}
+			});
+		}
+
+		function addGirl(trans, girlid, price, cb) {
 			// invalid girl
 			if (!table.girl.hasOwnProperty(girlid)) {
 				sendobj(trans.obj);
@@ -947,6 +1095,41 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
+		function updateBoard (trans, newscore, cb) {
+			var uid = trans.uid;
+			var addcontrib = Math.ceil(newscore/1000);
+			db.zscore('score', uid, check(function(oldscore){
+				db.zscore('contrib', uid, check(function(oldcontrib){
+					db.hmget('role.board:'+uid, ['ScoreMax', 'ContribMax'], check(function(data){
+						var highscore = Math.floor(data[0]);
+						var highcontrib = Math.floor(data[1]);
+						var newcontrib = Math.floor(oldcontrib) + Math.floor(addcontrib);
+						var mod = {};
+						if (newscore > highscore) {
+							mod.ScoreMax = newscore;
+						}
+						if (newcontrib > highcontrib) {
+							mod.ContribMax = newcontrib;
+						}
+
+						if (newscore > oldscore) {
+							db.zadd('score', addTimeStamp(newscore), uid);
+						}
+						if (addcontrib > 0) {
+							db.zadd('contrib', addTimeStamp(newcontrib), uid);
+						}
+						if (Object.keys(mod).length > 0) {	// update personal max
+							trans.hmset('role.board', mod, check(function(){
+								cb();
+							}));
+						} else {
+							cb();
+						}
+					}));
+				}));
+			}));
+		}
+
 		switch(msg.cmd) {
 		case 'echo': 
 			//@cmd echo
@@ -963,66 +1146,16 @@ wss.on('connection', function(ws) {
 			//@desc 设置得分（如果得分比当前分数低则忽略）
 			getuser(function(user,uid){
 				try {
-					var newscore = Math.floor(msg.data.score);
+					var score = Math.floor(msg.data.score);
 				} catch (e) {
 					senderr('data_err');
 					return;
 				}
 
-				var updateMaxScore = function () {
-					db.hget('role.board:'+uid, 'ScoreMax', check(function(highscore){
-						if (newscore > highscore) {
-							var trans = new Transaction(db, uid);
-							trans.hset('role.board', 'ScoreMax', newscore, check(function(){
-								sendobj(trans.obj);
-							}));
-						} else {
-							sendnil();
-						}
-					}));
-				}
-
-				db.zscore('score', uid, check(function(score){
-					if (newscore > score) {
-						db.zadd('score', newscore, uid, check(function(){
-							updateMaxScore();
-						}));
-					} else {
-						updateMaxScore();
-					}
-				}));
-			});
-			break;
-		case 'ADD_Contrib':
-			//@cmd ADD_Contrib
-			//@data contrib
-			//@desc 增加贡献值
-			getuser(function(user,uid){
-				try {
-					var addcontrib = Math.floor(msg.data.contrib);
-				} catch (e) {
-					senderr('data_err');
-					return;
-				}
-
-				var updateMaxContrib = function (contrib) {
-					db.hget('role.board:'+uid, 'ContribMax', check(function(highscore){
-						contrib = Math.floor(contrib);
-						highscore = Math.floor(highscore);
-						if (contrib > highscore) {
-							var trans = new Transaction(db, uid);
-							trans.hset('role.board', 'ContribMax', contrib, check(function(){
-								sendobj(trans.obj);
-							}));
-						} else {
-							sendnil();
-						}
-					}));
-				}
-
-				db.zincrby('contrib', addcontrib, uid, check(function(contrib){
-					updateMaxContrib(contrib);
-				}));
+				var trans = new Transaction(db, uid);
+				updateBoard(trans, score, function(){
+					sendobj(trans.obj);
+				});
 			});
 			break;
 		case 'RESET_ScoreBoard':
@@ -1039,7 +1172,7 @@ wss.on('connection', function(ws) {
 			break;
 		case 'getboard':
 			//@cmd getboard
-			//@data type 
+			//@data type
 			//@desc 获取排行榜	(type: "score" or "contrib")
 			try {
 				var type = msg.data.type;
@@ -1318,7 +1451,7 @@ wss.on('connection', function(ws) {
 			}
 			getuser(function(user, uid){
 				var trans = new Transaction(db, uid);
-				addGirlExp(trans, uid, girlid, expinc, function(){
+				addGirlExp(trans, girlid, expinc, function(){
 					sendobj(trans.obj);
 				});
 			});
@@ -1714,7 +1847,7 @@ wss.on('connection', function(ws) {
 										}
 									}));
 								} else if (type == 'girl') {
-									addgirl(trans, id);
+									addGirl(trans, id);
 								} else {
 									// invalid gift
 									sendobj(trans.obj);
@@ -2015,9 +2148,9 @@ wss.on('connection', function(ws) {
 									sendobj(trans.obj);
 								}));
 							} else if (item.Effect == 11) {	// 4 star girl
-								// addgirl
+								// addGirl
 								var girl = new Girl();
-								addgirl(trans, girl.fourStars(table));
+								addGirl(trans, girl.fourStars(table));
 							}
 							break;
 						case 3:	//wuxing
@@ -2539,7 +2672,7 @@ wss.on('connection', function(ws) {
 							var type = Math.floor(mission.ItemID/1000);
 							switch (type) {
 								case 10:	// girl
-									addgirl(trans, mission.ItemID, 0);
+									addGirl(trans, mission.ItemID, 0);
 									break;
 								case 12:	// item
 									addItem(trans, mission.ItemID, mission.ItemNum, function(){
@@ -2767,7 +2900,7 @@ wss.on('connection', function(ws) {
 					console.log(info);
 					var mapid = info.mapId;
 					var map = table.map[mapid];
-					var items = info.getItem || {};
+					var drop = info.getItem || {};
 					var score = Math.floor(info.score);
 					var team = info.team;
 					if (!map || isNaN(score) || team<1 || team>5) {
@@ -2780,162 +2913,42 @@ wss.on('connection', function(ws) {
 
 				var trans = new Transaction(db, uid);
 
-				// map:uid {mapid:bitmap}
-				db.hget('map:'+uid, mapid, check(function(mapmission){
-					var first = mapmission === null;
-					mapmission = mapmission || 0;
+				// add role exp			-- role
+				addRoleExp(trans, map.Exp, function(){
 
-					// add role exp			-- role
-					addRoleExp(trans, map.Exp, function(){
+					// add girlexp			-- girl
+					addTeamExp(trans, team, map.Exp, function(){
 
-						// add girlexp			-- girl
-						db.lrange('team.'+team+':'+uid,0,-1,check(function(girllist){
-							var cnt = girllist.length;
-							if (cnt==0) {
-								senderr('game_err');
-								return;
-							}
+						// add money
+						addItem(trans, Const.CREDIT_ID, map.Money, function(){
 
-							// compute grade (S A B C D 1-5)-- map
-							var grade = getGrade(mapid, score);
-							trans.client().set('grade', grade);
+							// drop items
+							addItems(trans, drop.item, function(){
 
-							girllist.forEach(function(girlid,i){
-								addGirlExp(trans, uid, girlid, map.Exp, function(){
-									if (i < cnt-1) {
-										return;
-									}
+								// drop equip
+								addEquips(trans, drop.equip, map.Lv, function() {
 
-									// add girl done
+									// drop girl
+									addGirls(trans, drop.girl, function() {
 
-									// add money			-- item
-									if (!items[Const.CREDIT_ID]) {
-										items[Const.CREDIT_ID] = 0;
-									}
-									items[Const.CREDIT_ID] += map.Money;
+										// map mission
+										updateMap(trans, mapid, info, function(){
 
-									// add item				-- item
-									var itemids = [];
-									for (var itemid in items) {
-										// check item type
-										if (table.item.hasOwnProperty(itemid)) {
-											if (table.item[itemid].Type != 4) {
-												itemids.push(itemid);
-											}
-										}
-									}
-
-									var itemcnt = itemids.length;
-									itemids.forEach(function(itemid,i){
-										trans.hincrby('item', itemid, items[itemid], check(function(){
-											if (i < itemcnt-1) {
-												return;
-											}
-
-											// add item done
-
-											// add contribution		-- contrib
-											var updateMapMission = function (cb) {
-												var mstate = 0;
-												for (var j=1; j<=3; j++) {
-													var val = map['RequirementValue'+j];
-													switch (map['StarRequirement'+j]) {
-														case 1:
-															var k = Math.floor(info.kill*100/info.enemy);
-															if (!val || k > val) {
-																mstate |= 1;
-															}
-															break;
-														case 2:
-															if (!val || info.hp > val) {
-																mstate |= 2;
-															}
-															break;
-														case 3:
-															if (!val || grade<=val) {
-																mstate |= 4;
-															}
-															break;
-													}
-												}
-
-												// grade (bit 4-8)
-												mstate |= 4<<grade;
-
-												var newmission = mapmission | mstate;
-												if (first || newmission != mapmission) {
-													trans.hset('map', mapid, newmission, check(function(){
-														cb();
-													}));
-												} else {
-													cb();
-												}
-											}
-
-											var doneInfinite = function (contrib, score) {
-												contrib = Math.floor(contrib);
-												score = Math.floor(score);
-
-												// incr map count
-												trans.hincrby('map', mapid+':cnt', 1, check(function(){
-													// check map mission
-													updateMapMission(function(){
-														// update max contrib & max score
-														db.hmget('role.board:'+uid, ['ScoreMax', 'ContribMax'], check(function(highscores){
-															var high = {};
-															if (contrib > Math.floor(highscores[1])) {
-																high.ContribMax = contrib;
-															}
-															if (score > Math.floor(highscores[0])) {
-																high.ScoreMax = score;
-															}
-
-															if (Object.keys(high).length > 0) {
-																trans.hmset('role.board', high, check(function(){
-																	sendobj(trans.obj);
-																}));
-															} else {
-																sendobj(trans.obj);
-															}
-														}));
-													});
-												}));
-											}
-
-											var done = function () {
-												trans.hincrby('map', mapid+':cnt', 1, check(function(){
-													// check map mission
-													updateMapMission(function(){
-														sendobj(trans.obj);
-													});
-												}));
-											}
-
+											// leader board
 											if (map.Type == Const.INFINITE_MODE_TYPE) {
-												var contrib = Math.ceil(score/1000);
-												trans.zincrby('contrib', contrib, uid, check(function(newcontrib){
-													// update score board	-- score
-													db.zscore('score', uid, check(function(oldscore){
-														if (score > oldscore) {
-															// update max score
-															db.zadd('score', score, uid, check(function(){
-																doneInfinite(newcontrib, score);
-															}));
-														} else {
-															doneInfinite(newcontrib, score);
-														}
-													}));
-												}));
+												updateBoard(trans, score, function(){
+													sendobj(trans.obj);
+												});
 											} else {	// normal mode
-												done();
+												sendobj(trans.obj);
 											}
-										}));
+										});
 									});
 								});
 							});
-						}));
+						});
 					});
-				}));
+				});
 			});
 			break;
 		case 'buygirl':
@@ -2982,7 +2995,7 @@ wss.on('connection', function(ws) {
 
 								trans.hmset('item', itemcounts, check(function(){
 									try {
-										addgirl(trans, buygirl(), Const.GIRL_PRICE);
+										addGirl(trans, buygirl(), Const.GIRL_PRICE);
 									} catch (e) {
 										senderr('buygirl_err');
 									}
@@ -2990,7 +3003,7 @@ wss.on('connection', function(ws) {
 							}));
 						} else {
 							try {
-								addgirl(trans, buygirl(), Const.GIRL_PRICE);
+								addGirl(trans, buygirl(), Const.GIRL_PRICE);
 							} catch (e) {
 								senderr('buygirl_err');
 							}
