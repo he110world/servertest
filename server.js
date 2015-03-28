@@ -27,6 +27,21 @@ var Const = require('./const');
 var Util = require('./util');
 var moment = require('moment');
 var sectionDifficultyTable = genSDT();
+var gameStateTable = [	//gamestate[mission.FinishCondition]
+	,				// 0
+	,				// 1
+	'teamof4',		// 2
+	'evolve',		// 3
+	,				// 4
+	'kill',			// 5
+	'usemedal',		// 6
+	'maxscore',		// 7
+	'mp',			// 8
+	'exboss',		// 9
+	'scorerank',	// 10
+	'contribrank'	// 11
+	];
+var missionCnt = Object.keys(table.mission).length;
 
 // kpi
 var kpi = require('./kpilog');
@@ -468,25 +483,155 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function incrGameStat (trans, obj, cb) {
-			Object.keys(obj).forEach(function(key, i){
-				trans.hincrby('gamestat', key, obj[key], check(function(){
-					if (i == keys.length) {
-						cb();
-					}
-				}));
-			});
+		function incrGameState (trans, key, val, cb) {
+			trans.hincrby('gamestate', key, obj, check(cb));
 		}
 
-		function setMissionState (trans, keyname, statebits, cb) {
-			db.hset(keyname, trans.uid, statebits, check(function(){
-				var clientkey = keyname.split(':')[0];
-				trans.client.set(clientkey, statebits);
+		function finishMission (trans, id, key, buf, cb) {
+			setMissionState(buf, id);
+			var base64 = encodeMission(buf);
+			db.hset(key, trans.uid, base64, check(function(){
+				var clientkey = key.split(':')[0];
+				trans.client().set(clientkey, base64);
 				cb();
 			}));
 		}
 
-		function getMissionState (timeType, cb) {
+		function canStartMission (trans, id, cb) {
+			var mission = table.mission[id];
+			var key = getMissionKey(mission.TimeType);
+			var uid = trans.uid;
+			db.hget(key, uid, check(function(base64str){
+				var buf = decodeMission(base64str, missionCnt);
+
+				if (getMissionState(buf, id)) {	// already finished
+					senderr('mission_finished_err');
+					return;
+				}
+
+				// check start condition
+				var cond = mission.StartCondition;
+				var val = mission.StartConditionValue;
+				if (cond == 0) {	// no condition
+					cb(key, buf);
+				} else if (cond == 1) {	// mapid finished
+					db.hget('map:'+uid, val, check(function(mapmission){
+						if (mapmission !== null) {	// can start
+							// can finish ?
+							cb(key, buf);
+						} else {
+							senderr('mission_err');
+						}
+					}));
+				} else if (cond == 2) {	// mission finished
+					if (getMissionState(buf, val)) {	// can start
+						// can finish
+						cb(key, buf);
+					} else {
+						senderr('mission_err');
+					}
+				} else {
+					senderr('mission_err');
+				}
+			}));
+		}
+
+		function canFinishMission (trans, id, cb) {
+			// finish conditions
+			var mission = table.mission[id];
+			var cond = mission.FinishCondition;
+			var val = mission.FinishConditionValue;
+			if (cond == 1) {
+				db.hget('map:'+uid, mapid, check(function(mapmission){
+					var finish = false;
+					for (var i=val; i>0; i--) {
+						if (mapmission | (4<<i)) {
+							finish = true;
+							break;
+						}
+					}
+					if (finish) {
+						cb();
+					} else {
+						senderr('mission_err');
+					}
+				}));
+			} else if (cond == 4) {
+				db.hmget('gamestate:'+uid, ['sp','mp'], check(function(sp_mp){
+					if (Math.floor(sp_mp[0]) + Math.floor(sp_mp[1]) >= val) {
+						cb();
+					} else {
+						senderr('mission_err');
+					}
+				}));
+			} else {
+				var lessequal = cond==10 || cond==11;
+				var gamestate = gameStateTable[cond];
+				if (gamestate) {
+					db.hget('gamestate:'+uid, gamestate, check(function(stateval){
+						if ((!leq && stateval >= val) || (leq && stateval <= val)) {
+							cb();
+						} else {
+							senderr('mission_err');
+						}
+					}));
+				}
+			}
+		}
+
+		function decodeMission (base64str, cnt) {
+			var buf;
+			if (!base64str) {	// empty
+				buf = new Buffer(cnt);
+				buf.fill(0);
+			} else {
+				buf = new Buffer(base64str, 'base64');
+				if (buf.length < cnt) {
+					var pending = new Buffer(cnt - buf.length);
+					pending.fill(0);
+					buf = Buffer.concat(buf, pending);
+				}
+			}
+			return buf;
+		}
+
+		function encodeMission (buf) {
+			return buf.toString('base64');
+		}
+
+		function getMissionState (buf, id) {
+			var idx = id - Const.MISSION_ID_OFFSET;
+			return (buf[Math.floor(idx/8)] & (1 << idx%8)) > 0;
+		}
+
+		function setMissionState (buf, id) {
+			var idx = id - Const.MISSION_ID_OFFSET;
+			buf[Math.floor(idx/8)] |= 1 << idx%8;
+		}
+
+		function getMissionReward (trans, id, cb) {
+			var mission = table.mission[id];
+			var type = Math.floor(mission.ItemID/1000);
+			switch (type) {
+				case 10:	// girl
+					addGirl(trans, mission.ItemID, 0, cb);
+					break;
+				case 12:	// item
+					addItem(trans, mission.ItemID, mission.ItemNum, cb);
+					break;
+				case 13:	// equip
+					addEquip(trans, mission.ItemID, cb);
+					break;
+				case 14:	// gift
+					addGift(trans, mission.ItemID, cb);
+					break;
+				default:
+					cb();
+					break;
+			}
+		}
+
+		function getMissionKey (timeType) {
 			// mission type
 			// 1 - once
 			// 2 - daily
@@ -495,29 +640,22 @@ wss.on('connection', function(ws) {
 			// refreshed at 5 a.m.
 			var keyname;
 			if (timeType == 1) {	// once
-				keyname = 'once';
+				keyname = 'mission.once';
 			} else {
 				var time = moment().subtract(Config.MISSION_RESET_HOUR, 'hour');
 				switch (timeType) {
 					case 2:	// daily
-						keyname = 'daily:'+time.format('YYYYMMDD');
+						keyname = 'mission.day:'+time.format('YYYYMMDD');
 						break;
 					case 3:	// weekly
-						keyname = 'weekly:'+time.format('YYYYw');
+						keyname = 'mission.week:'+time.format('YYYYw');
 						break;
 					case 4:	// monthly
-						keyname = 'monthly:'+time.format('YYYYMM');
+						keyname = 'mission.month:'+time.format('YYYYMM');
 						break;
 				}
 			}
-			if (!keyname) {
-				senderr('mission_err');
-				return;
-			}
-
-			db.hget(keyname, uid, check(function(statebits){
-				cb(keyname, statebits);
-			}));
+			return keyname;
 		}
 
 		function getGrade (mapid, score) {
@@ -2626,8 +2764,8 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'getMissionReward':
-			//@cmd getMissionReward
+		case 'getmissionreward':
+			//@cmd getmissionreward
 			//@data id
 			//@desc 领取任务奖励
 			getuser(function(user, uid){
@@ -2643,158 +2781,34 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				getMissionState(mission.TimeType, function(missionkey, statebits){
-					var isfinished = function(state, missionid) {
-						var idx = missionid - Const.MISSION_ID_OFFSET;
-						if (state) {
-							return state[idx] > 0;
-						} else {
-							return false;
-						}
-					}
+				var trans = new Transaction(db, uid);
 
-					var setfinished = function(state, missionid) {
-					}
+				// check start
+				canStartMission(trans, id, function(key, buf){
 
-					// already finished
-					if (isfinished(statebits, id)) {
-						senderr('mission_err');
-						return;
-					}
+				console.log(key, buf);
+					// check finish
+					canFinishMission(trans, id, function(){
 
-					var getreward = function() {
-						var trans = new Transaction(db, uid);
+				console.log(2);
+						// do finish
+						finishMission(trans, id, key, buf, function(){
 
-						// update mstate
-//						mstate[missionid - Const.MISSION_ID_OFFSET] = 1;
+				console.log(3);
+							// get reward
+							getMissionReward(trans, id, function(){
 
-						setMissionState(trans, missionkey, statebits, function(){
-							var type = Math.floor(mission.ItemID/1000);
-							switch (type) {
-								case 10:	// girl
-									addGirl(trans, mission.ItemID, 0);
-									break;
-								case 12:	// item
-									addItem(trans, mission.ItemID, mission.ItemNum, function(){
-										sendobj(trans.obj);
-									});
-									break;
-								case 13:	// equip
-									addEquip(trans, mission.ItemID, function(){
-										sendobj(trans.obj);
-									});
-									break;
-								case 14:	// gift
-									addGift(trans, mission.ItemID, function(){
-										sendobj(trans.obj);
-									});
-									break;
-								default:
-									sendobj(trans.obj);
-									break;
-							}
+				console.log(4);
+								// done
+								sendobj(trans.obj);
+							});
 						});
-					}
-
-					var err = function() {
-						senderr('mission_err');
-					}
-
-					var checkstat = function (key, targetval, leq) {
-						db.hget('gamestat:'+uid, key, check(function(val){
-							if ((!leq && val >= targetval) || (leq && val <= targetval)) {
-								getreward();
-							} else {
-								err();
-							}
-						}));
-					}
-
-					var tryfinish = function() {
-						var val = mission.FinishConditionValue;
-						switch (mission.FinishCondition) {
-							case 1:	// finishmap: mapid & grade				=> map:uid:{mapid:bitmap[4~8]}
-								db.hget('map:'+uid, mapid, check(function(mapmission){
-									for (var i=val; i>0; i--) {
-										if (mapmission | (4<<i)) {
-											getreward();
-											return;
-										}
-									}
-									err();
-								}));
-								break;
-							case 2:	// finishmap: team: 4 girls				=> gamestat:{teamof4:<int>}
-								checkstat('teamof4', val);
-								break;
-							case 3:	// evolvegirl: n evolved girls			=> gamestat:{evolve:<int>}
-								checkstat('evolve', val);
-								break;
-							case 4:	// finishmap: n fights (sp or mp)		- record num of fights	gamestat:{sp:<int>,mp:<int>}
-								db.hmget('gamestat:'+uid, ['sp','mp'], checklist(2, function(sp_mp){
-									if (Math.floor(sp_mp[0]) + Math.floor(sp_mp[1]) >= val) {
-										getreward();
-									} else {
-										err();
-									}
-								}));
-								break;
-							case 5:	// finishmap: n kills					- record num kills		gamestat:{kill:<int>}
-								checkstat('kill', val);
-								break;
-							case 6:	// useitem: use medal					=> gamestat:{usemedal:<int>}
-								checkstat('usemedal', 1);
-								break;
-							case 7:	// finishmap: challange map score > n	=> gamestat:{maxscore:<int>}
-								checkstat('maxscore', val);
-								break;
-							case 8:	// finishmap: n mp fights				- record num of fights 
-								checkstat('mp', val);
-								break;
-							case 9:	// finishmap: kill n exboss				- record num of exboss killed	gamestat:{exboss:<int>}
-								checkstat('exboss', val);
-								break;
-							case 10:// finishmap: score rank <= n
-								checkstat('scorerank', val, true);
-								break;
-							case 11:// finishmap: contrib rank <= n
-								checkstat('contribrank', val, true);
-								break;
-							default:// no condition
-								givereward();
-								break;
-						}
-					}
-
-					var val = mission.StartConditionValue;
-					switch (mission.StartCondition) {
-						case 1:	// mapid finished
-							db.hget('map:'+uid, mapid, check(function(mapmission){
-								if (mapmission !== null) {	// can start
-									// can finish ?
-									tryfinish();
-								} else {
-									senderr('mission_err');
-								}
-							}));
-							break;
-						case 2:	// mission finished
-							if (isfinished(statebits, val)) {	// can start
-								// can finish
-								tryfinish();
-							} else {
-								senderr('mission_err');
-							}
-							break;
-						default:	// no condition
-							tryfinish();
-							break;
-					}
+					});
 				});
 			});
 			break;
-		case 'getMapReward':
-			//@cmd getMapReward
+		case 'getmapreward':
+			//@cmd getmapreward
 			//@data id
 			//@desc 领取地图任务奖励
 			getuser(function(user, uid){
@@ -3182,6 +3196,64 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
+		case 'roommates':
+			//@cmd roommates
+			//@data id
+			//@desc 获取房间玩家队伍信息
+			// role:<uid> {RoomTeam, Lv, Nick}
+			// team.<role.RoomTeam>:<uid> -> [girlId1, girlId2, ...] -> girl.<girlId>:<uid>
+			getuser(function(user, uid){
+				try {
+					var uids = msg.data.id.toString().split('$');
+				} catch (e) {
+					senderr('data_err');
+					return;
+				}
+				var cnt = 0;
+				var mates = {};
+				uids.forEach(function(uid, i){
+					// get role 
+					db.hmget('role:'+uid, ['RoomTeam', 'Lv', 'Nick'], checklist(3, function(data){
+						var mate = new Teammate(uid);
+						mates[uid] = mate;
+						mate.initRole(data);
+
+						function finish () {
+							++cnt;
+							if (cnt == uids.length) {
+								sendobj({roommate:mates});
+							}
+						}
+
+						// get team
+						if (mate.role.RoomTeam) {
+							db.lrange('team.'+mate.role.RoomTeam+':'+uid, 0, -1, check(function(team){
+								if (team.length > 0) {
+									mate.initTeam(team);
+
+									// get girls
+									var girlcnt = 0;
+									team.forEach(function(girlId, j){
+										db.hgetall('girl.'+girlId+':'+uid, check(function(girl){
+											++girlcnt;
+											mate.addGirl(girl);
+
+											if (girlcnt == team.length) {
+												finish();
+											}
+										}));
+									});
+								} else {	// empty team
+									finish();
+								}
+							}));
+						} else {	// no team
+							finish();
+						}
+					}));
+				});
+			});
+			break;
 		case 'view':
 			//@cmd view
 			//@data name
@@ -3226,59 +3298,6 @@ wss.on('connection', function(ws) {
 							}
 						}));
 						break;
-					case 'roommates':
-						// role:<uid> {RoomTeam, Lv, Nick}
-						// team.<role.RoomTeam>:<uid> -> [girlId1, girlId2, ...] -> girl.<girlId>:<uid>
-						try {
-							var uids = msg.data.id.toString().split('$');
-						} catch (e) {
-							senderr('data_err');
-							return;
-						}
-						var cnt = 0;
-						var mates = {};
-						uids.forEach(function(uid, i){
-							// get role 
-							db.hmget('role:'+uid, ['RoomTeam', 'Lv', 'Nick'], checklist(3, function(data){
-								var mate = new Teammate(uid);
-								mates[uid] = mate;
-								mate.initRole(data);
-
-								function finish () {
-									++cnt;
-									if (cnt == uids.length) {
-										sendobj({roommate:mates});
-									}
-								}
-
-								// get team
-								if (mate.role.RoomTeam) {
-									db.lrange('team.'+mate.role.RoomTeam+':'+uid, 0, -1, check(function(team){
-										if (team.length > 0) {
-											mate.initTeam(team);
-
-											// get girls
-											var girlcnt = 0;
-											team.forEach(function(girlId, j){
-												db.hgetall('girl.'+girlId+':'+uid, check(function(girl){
-													++girlcnt;
-													mate.addGirl(girl);
-
-													if (girlcnt == team.length) {
-														finish();
-													}
-												}));
-											});
-										} else {	// empty team
-											finish();
-										}
-									}));
-								} else {	// no team
-									finish();
-								}
-							}));
-						});
-						break;
 					case 'item':
 						trans.hgetall('item', check(function(item){
 							sendobj(trans.obj);
@@ -3317,6 +3336,8 @@ wss.on('connection', function(ws) {
 						trans.get('mapreward', check(function(){
 							sendobj(trans.obj);
 						}));
+						break;
+					case 'mission':
 						break;
 						/*
 					case 'gift':
