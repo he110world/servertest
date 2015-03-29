@@ -707,6 +707,78 @@ wss.on('connection', function(ws) {
 			}
 		}
 
+		function finishMapMission (trans, id, bit, cb) {
+			var uid = trans.uid;
+			db.hget('mapreward:'+uid, id, check(function(bits){
+				bits = bits || 0;
+				if (bits & (1<<bit)) {	// already finished
+					senderr('map_err');
+					return;
+				}
+
+				// write the bit
+				bits |= (1<<bit);
+
+				// check conditions
+				var mapreward = table.mapreward[id];
+				var cond = mapreward.ConditionType1.split('$')[bit];
+				var val = mapreward.ConditionValue1.split('$')[bit];
+				if (cond == 1) {	// finish map
+					db.hget('map:'+uid, val, check(function(mapstate){	// val is mapid
+						if (mapstate !== null) {
+							cb(bits);
+						} else {
+							senderr('map_err');
+						}
+					}));
+				} else if (cond == 2) {	// percent
+					var maplist = sectionDifficultyTable[mapreward.Section + ':' + mapreward.Difficulty];
+					if (maplist) {
+						db.hmget('map:'+uid, maplist, check(function(statelist){
+							var finish = 0;
+							for (var i in statelist) {
+								var state = statelist[i];
+								if (state !== null) {
+									++finish;
+								}
+								if (state & 1) {
+									++finish;
+								}
+								if (state & 2) {
+									++finish;
+								}
+								if (state & 4) {
+									++finish;
+								}
+							}
+							var total = statelist.length * 4;
+							var percent = finish * 100 / total;
+							if (percent >= val) {	// val is target percentage
+								cb(bits);
+							} else {
+								senderr('map_err');
+							}
+						}));
+					} else {
+						senderr('map_err');
+					}
+				} else {
+					senderr('map_err');
+				}
+			}));
+		}
+
+		function getMapReward (trans, id, bit, bits, cb) {
+			var giftid = table.mapreward[id].Reward1.split('$')[bit];
+			if (giftid) {
+				addGift(trans, giftid, function(){
+					trans.hset('mapreward', id, bits, check(cb));
+				});
+			} else {
+				senderr('map_err');
+			}
+		}
+
 		function doHandOver (handid, handpass, cb) {
 			db.hget('handover2uid', handid, check2(function(udid$uid){
 				var uu = udid$uid.split(':');
@@ -2887,10 +2959,12 @@ wss.on('connection', function(ws) {
 		case 'getmaprwd':
 			//@cmd getmaprwd
 			//@data id
+			//@data bit
 			//@desc 领取地图任务奖励
 			getuser(function(user, uid){
 				try {
 					var id = msg.data.id;
+					var bit = msg.data.bit;
 					var mapreward = table.mapreward[id];
 					if (!mapreward) {
 						throw new Error();
@@ -2900,85 +2974,12 @@ wss.on('connection', function(ws) {
 					return;
 				}
 
-				db.getbit('mapreward:'+uid, id, check(function(got){
-					if (got) {	// already got reward
-						sendnil();
-						return;
-					}
-
-					var getreward = function () {
-						db.setbit('mapreward:'+uid, id, check(function(){
-							var trans = new Transaction(db, uid);
-							trans.get('mapreward', check(function(){
-								var gifts = mapreward.Reward1.split('$');
-								gifts.forEach(function(giftid, i){
-									addGift(trans, giftid, function(){
-										if (i == gifts.length) {	// done
-											sendobj(trans.obj);
-										}
-									});
-								});
-							}));
-						}));
-					}
-
-					var getfinish = function (maplist, cb) {
-						if (maplist) {
-							db.hmget('map:'+uid, maplist, check(function(statelist){
-								var finish = 0;
-								for (var i in statelist) {
-									var state = statelist[i];
-									if (state !== null) {
-										++finish;
-									}
-									if (state & 1) {
-										++finish;
-									}
-									if (state & 2) {
-										++finish;
-									}
-									if (state & 4) {
-										++finish;
-									}
-								}
-								var total = statelist.length * 4;
-								cb(finish * 100 / total);
-							}));
-						} else {
-							sendnil();
-						}
-					}
-
-					var val = mapreward.ConditionValue1;
-					switch (mapreward.ConditionType1) {
-						case 1:	// finish map
-							if (val) {
-								db.hget('map:'+uid, val, check(function(mstate){
-									if (mstate !== null) {
-										getreward();
-									} else {
-										sendnil();
-									}
-								}));
-							} else {
-								sendnil();
-							}
-							break;
-						case 2:	// percentage
-							var maplist = sectionDifficultyTable[mapreward.Section + ':' + mapreward.Difficulty];
-							getfinish(maplist, function(finish){
-								if (finish >= val) {
-									getreward();
-								} else {
-									sendnil();
-								};
-							});
-							break;
-						default:
-							sendnil();
-							break;
-					}
-				}));
+				var trans = new Transaction(db, uid);
+				finishMapMission(trans, id, bit, function(bits){
+					getMapReward(trans, id, bit, bits, function(){
+						sendobj(trans.obj);
+					});
+				});
 			});
 			break;
 		case 'finishmap':
@@ -3410,7 +3411,7 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 					case 'mapreward':
-						trans.get('mapreward', check(function(){
+						trans.hgetall('mapreward', check(function(){
 							sendobj(trans.obj);
 						}));
 						break;
