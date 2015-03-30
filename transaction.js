@@ -177,37 +177,43 @@ Transaction.prototype.hgetalljson = function (key, cb) {
 // convert json object to string, and store string in db
 Transaction.prototype.hsetjson = function (key, hkey, jsonobj, cb) {
 	var fullkey = key+':'+this.uid;
+	merge(this.obj, key+'.'+hkey, jsonobj);
 	if (this.mul) {
 		this.mul.hset(fullkey, hkey, JSON.stringify(jsonobj));
 		this.skipkey();
-		merge(this.obj, key+'.'+hkey, jsonobj);
 		return this;
 	} else {
-		var self = this;
-		this.db.hset(fullkey, hkey, JSON.stringify(jsonobj), function(err,addcount){
-			merge(self.obj, key+'.'+hkey, jsonobj);
-			if (typeof cb == 'function') {
-				cb(err,addcount);
-			}
-		});
+		if (this.cli) {
+			this.cli = null;
+		} else {
+			var self = this;
+			this.db.hset(fullkey, hkey, JSON.stringify(jsonobj), function(err,addcount){
+				if (typeof cb == 'function') {
+					cb(err,addcount);
+				}
+			});
+		}
 	}
 }
 
 Transaction.prototype.hset = function (key, hkey, val, cb) {
 	var fullkey = key+':'+this.uid;
+	merge(this.obj, key+'.'+hkey, val);
 	if (this.mul) {
 		this.mul.hset(fullkey, hkey, val);
 		this.skipkey();
-		merge(this.obj, key+'.'+hkey, val);
 		return this;
 	} else {
-		var self = this;
-		this.db.hset(fullkey, hkey, val, function(err,addcount){
-			merge(self.obj, key+'.'+hkey, val);
-			if (typeof cb == 'function') {
-				cb(err,addcount);
-			}
-		});
+		if (this.cli) {
+			this.cli = null;
+		} else {
+			var self = this;
+			this.db.hset(fullkey, hkey, val, function(err,addcount){
+				if (typeof cb == 'function') {
+					cb(err,addcount);
+				}
+			});
+		}
 	}
 }
 

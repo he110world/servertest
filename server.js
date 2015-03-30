@@ -2028,6 +2028,50 @@ wss.on('connection', function(ws) {
 				}
 			});
 			break;
+		case 'friendequip':
+			//@cmd friendequip
+			//@data uid
+			//@desc 获取其他玩家team1 girl1的装备信息，返回friend.uid.equip:{idx:equipdata}
+			getuser(function(user, uid){
+				try {
+					var fid = msg.data.uid;
+					if (isNaN(parseInt(fid))) {
+						throw new Error();
+					}
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				db.lindex('team.1:'+fid, 0, check(function(girlid){
+					db.hmget('girlequip:'+fid, [girlid+':1', girlid+':2', girlid+':3', girlid+':4'], check(function(equips){
+						var trans = new Transaction(db, uid);
+						var equipkey = 'friend.'+fid+'.equip';
+						var validequips = [];
+						for (var i in equips) {
+							var e = equips[i];
+							if (e) {
+								validequips.push(e);
+							}
+						}
+						if (validequips.length > 0) {
+							validequips.forEach(function(idx, i){
+								db.hget('equip:'+fid, idx, check(function(jsonstr){
+									var equip = JSON.parse(jsonstr);	//TODO: error handling
+									trans.client().hset(equipkey, idx, equip);
+									if (i == validequips.length - 1) {	// done
+										sendobj(trans.obj);
+									}
+								}));
+							});
+						} else {
+							trans.client().set(equipkey, {});
+							sendobj(trans.obj);
+						}
+					}));
+				}));
+			});
+			break;
 		case 'friendbrief':
 			//@cmd friendbrief
 			//@data uids
@@ -3432,7 +3476,6 @@ wss.on('connection', function(ws) {
 							}));
 						}));
 						break;
-					case 'allgift':
 					case 'gift':
 						trans.hgetalljson('gift', check(function(){
 							sendobj(trans.obj);
