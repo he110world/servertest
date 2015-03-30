@@ -1080,57 +1080,77 @@ wss.on('connection', function(ws) {
 				return;
 			}
 
+			var addSameGirl = function () {
+				db.incrby('next_gift_id:'+uid, 2, check2(function(index){	// two gifts for existing girl
+					var rare = Math.floor(table.girl[girlid].Rare);
+					var samegiftid = Const.SAME_GIRL_GIFT(rare);
+					var multi = trans.multi();
+					if (price > 0) {	// buy
+						var buygift = new Gift(Const.BUY_GIRL_GIFT);
+
+						multi
+						.hincrby('item', Const.PHOTON_ID, -price)
+						.hsetjson('gift', index-1, buygift);
+					}
+					if (samegiftid) {
+						multi.hsetjson('gift', index, new Gift(samegiftid));	// already own this girl
+					}
+					multi.exec(check(function(res){	// add medal
+						trans.client().set('buygirl', [girlid]);
+						if (typeof cb === 'function') {
+							cb();
+						} else {
+							sendobj(trans.obj);
+						}
+					}));
+				}));
+			}
+
+			var addNewGirl = function () {
+				db.incr('next_gift_id:'+uid, check2(function(index){
+					var girl = new Girl;
+					girl.newGirl(table, girlid);
+					var multi = trans.multi()
+					if (price > 0) {	// buy
+						var buygift = new Gift(Const.BUY_GIRL_GIFT);
+
+						multi
+						.hincrby('item', Const.PHOTON_ID, -price)
+						.hsetjson('gift', index, buygift);
+					}
+					multi
+					.sadd('girls', girlid)
+					.hmset('girl.'+girlid, girl)
+					.exec(check(function(res){
+						if (typeof cb === 'function') {
+							cb();
+						} else {
+							sendobj(trans.obj);
+						}
+					}));
+				}));
+
+			}
+
 			// already exist?
 			var uid = trans.uid;
 			db.sismember('girls:'+uid, girlid, check(function(exist){
 				if (exist) {
-					db.incrby('next_gift_id:'+uid, 2, check2(function(index){	// two gifts for existing girl
-						var rare = Math.floor(table.girl[girlid].Rare);
-						var samegiftid = Const.SAME_GIRL_GIFT(rare);
-						var multi = trans.multi();
-						if (price > 0) {	// buy
-							var buygift = new Gift(Const.BUY_GIRL_GIFT);
-
-							multi
-							.hincrby('item', Const.PHOTON_ID, -price)
-							.hsetjson('gift', index-1, buygift);
-						}
-						if (samegiftid) {
-							multi.hsetjson('gift', index, new Gift(samegiftid));	// already own this girl
-						}
-						multi.exec(check(function(res){	// add medal
-							trans.client().set('buygirl', [girlid]);
-							if (typeof cb === 'function') {
-								cb();
-							} else {
-								sendobj(trans.obj);
-							}
-						}));
-					}));
+					addSameGirl();
 				} else {
-					db.incr('next_gift_id:'+uid, check2(function(index){
-//						var girl = Girl.newGirl(table, girlid);
-						var girl = new Girl;
-						girl.newGirl(table, girlid);
-						var multi = trans.multi()
-						if (price > 0) {	// buy
-							var buygift = new Gift(Const.BUY_GIRL_GIFT);
-
-							multi
-							.hincrby('item', Const.PHOTON_ID, -price)
-							.hsetjson('gift', index, buygift);
-						}
-						multi
-						.sadd('girls', girlid)
-						.hmset('girl.'+girlid, girl)
-						.exec(check(function(res){
-							if (typeof cb === 'function') {
-								cb();
+					// has evolved girl?
+					var girl = table.girl[girlid];
+					if (girl.EvolutionID) {
+						db.sismember('girls:'+uid, girl.EvolutionID, check(function(exist2){
+							if (exist2) {
+								addSameGirl();
 							} else {
-								sendobj(trans.obj);
+								addNewGirl();
 							}
 						}));
-					}));
+					} else {
+						addNewGirl();
+					}
 				}
 			}));
 		}
@@ -3440,8 +3460,12 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 					case 'equip':
-						trans.hgetall('equip', check(function(){
-							sendjson(trans.obj);
+						trans.hgetall('equip', check(function(equips){
+							if (equips === null) {
+								sendobj({equip:{}});
+							} else {
+								sendjson(trans.obj);
+							}
 						}));
 						break;
 					case 'girlequip':
