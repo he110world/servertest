@@ -928,6 +928,45 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
+		function useActiveItem (trans, map, items, cb) {
+			db.hget('activeitem:'+trans.uid, 'ID', check(function(activeid){
+				var exp = map.Exp;
+
+				// add map money
+				var itemmoney = items[Const.CREDIT_ID] || 0;
+				items[Const.CREDIT_ID] = Math.floor(itemmoney) + Math.floor(map.Money);
+
+				var activeitem = table.item[activeid];
+				if (activeitem) {
+					var type = -1;
+					switch (activeitem.Effect) {
+						case 2:	//exp*2
+							exp *= 2;
+							break;
+						case 3:	//money*2
+							items[Const.CREDIT_ID] *= 2;
+							break;
+						case 4:	//medal*2
+							type = 1;
+							break;
+						case 10: //crystal*2
+							type = 3;
+							break;
+					}
+
+					if (type >= 0) {	// double medal or crystal
+						for (var i in items) {
+							var item = table.item[i];
+							if (item && item.Type == type) {
+								items[i] *= 2;
+							}
+						}
+					}
+				}
+				cb(exp, items);
+			}));
+		}
+
 		function addRoleExp(trans, expinc, cb) {
 			var uid = trans.uid;
 			var query = ['Lv', 'RoleExp'];
@@ -2513,7 +2552,7 @@ wss.on('connection', function(ws) {
 										.expire('activeitem', timeout)
 										.exec(checklist(3,function(res){
 											// set timeout for client use
-											trans.client().hmset('activeitem', {ID: itemid, Timeout: timeout * 1000});
+											trans.client().hmset('activeitem', {ID: itemid, Begin:null, Timeout: timeout * 1000});
 											sendobj(trans.obj);
 										}));
 									break;
@@ -3090,17 +3129,16 @@ wss.on('connection', function(ws) {
 
 				var trans = new Transaction(db, uid);
 
-				// add role exp			-- role
-				addRoleExp(trans, map.Exp, function(){
+				useActiveItem(trans, map, drop.item, function(exp, item){
 
-					// add girlexp			-- girl
-					addTeamExp(trans, team, map.Exp, function(){
+					// add role exp			-- role
+					addRoleExp(trans, exp, function(){
 
-						// add money
-						addItem(trans, Const.CREDIT_ID, map.Money, function(){
+						// add girlexp			-- girl
+						addTeamExp(trans, team, exp, function(){
 
-							// drop items
-							addItems(trans, drop.item, function(){
+							// drop items (including money)
+							addItems(trans, item, function(){
 
 								// drop equip
 								addEquips(trans, drop.equip, map.Lv, function() {
@@ -3125,6 +3163,7 @@ wss.on('connection', function(ws) {
 							});
 						});
 					});
+
 				});
 			});
 			break;
