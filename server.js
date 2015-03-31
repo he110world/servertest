@@ -1767,6 +1767,15 @@ wss.on('connection', function(ws) {
 				});
 			});
 			break;
+		case 'SET_GirlLv':
+			//@cmd SET_GirlLv
+			//@data id
+			//@data lv
+			//@desc 设置战姬等级（不考虑军衔）
+			try {
+			} catch (e) {
+			}
+			break;
 		case 'ADD_RoleExp':
 			//@cmd ADD_RoleExp
 			//@data count
@@ -2483,6 +2492,7 @@ wss.on('connection', function(ws) {
 							}
 							break;
 						case 2:	
+						case 4:
 							var trans = new Transaction(db, uid);
 							var multi = trans.multi();
 							if (count > 1) {
@@ -2491,25 +2501,36 @@ wss.on('connection', function(ws) {
 								multi.hdel('item', itemid);
 							}
 
-							if (item.Effect == 10) {	// double crystal
-								var iteminfo = {ID: itemid, Begin:Date.now()};
-								var timeout = item.EffectValue;
-								multi
-								.hmset('activeitem', iteminfo)
-								.expire('activeitem', timeout)
-								.exec(checklist(3,function(res){
-									// set timeout for client use
-									trans.client().hmset('activeitem', {ID: itemid, Timeout: timeout * 1000});
+							switch (item.Effect) {
+								case 2:	// limit time effect
+								case 3:
+								case 4:
+								case 10:
+									var iteminfo = {ID: itemid, Begin:Date.now()};
+									var timeout = item.EffectValue;
+									multi
+										.hmset('activeitem', iteminfo)
+										.expire('activeitem', timeout)
+										.exec(checklist(3,function(res){
+											// set timeout for client use
+											trans.client().hmset('activeitem', {ID: itemid, Timeout: timeout * 1000});
+											sendobj(trans.obj);
+										}));
+									break;
+								case 11:	// add four star girl
+									var girl = new Girl();
+									addGirl(trans, girl.fourStars(table));
+									break;
+								default:
 									sendobj(trans.obj);
-								}));
-							} else if (item.Effect == 11) {	// 4 star girl
-								// addGirl
-								var girl = new Girl();
-								addGirl(trans, girl.fourStars(table));
+									break;
 							}
 							break;
 						case 3:	//wuxing
 							senderr('cannot_use_item_err');
+							break;
+						default:
+							senderr('use_item_err');
 							break;
 					}
 				}));
