@@ -14,6 +14,8 @@ function Const () {
 	this.SLOT_PRICE = 10;
 	this.MAX_SLOT = 400;
 	this.MAX_FRIENDS = 50;
+	this.MAX_ROOMS = 99999;
+	this.MAX_LV = 999;
 	this.MISSION_RESET_HOUR = 5;
 	this.MISSION_ID_OFFSET = 15000;
 	this.SCORE_RANK_MAX = 5000;

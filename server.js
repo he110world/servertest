@@ -25,6 +25,8 @@ var Equip = require('./equip');
 var Gift = require('./gift');
 var Const = require('./const');
 var Util = require('./util');
+var Room = require('./room');
+var Search = require('./search');
 var moment = require('moment');
 var sectionDifficultyTable = genSDT();
 var gameStateTable = [	//gamestate[mission.FinishCondition]
@@ -39,7 +41,7 @@ var gameStateTable = [	//gamestate[mission.FinishCondition]
 	'mp',			// 8
 	'exboss',		// 9
 	'scorerank',	// 10
-	'contribrank'	// 11
+	'contrib'		// 11
 	];
 
 // init mission constants
@@ -177,47 +179,24 @@ Teammate.prototype.addGirl = function (girlData) {
 	this.girl[girlData.ID] = girlData;
 }
 
-
 sub.psubscribe('recruit.*');
 sub.on('pmessage', function(pattern, channel, message){
 	console.log(pattern,channel,message);
 	if (pattern == 'recruit.*') {
 		var cmd = channel.split('.')[1];
 		switch (cmd) {
-			case 'rooms':
-				//[roomid,roomid,...]
-				console.log(message);
-				if (message.length > 0) {
-					var roomids = message.split(',');
-
-					// find room members on this server
-					roomids.forEach(function(roomid, i){
-						db.lrange('room:'+roomid, 0, -1, function(err, uids){
-							console.log(uids);
-							for (var j=0; j<uids.length; j++) {
-								wss.sendcmd(uids[j], 'roomdirty');
-							}
-						});
-					});
-				}
+			case 'ok':
+				// message is room id
+				// find users in the room
+				db.lrange('room:'+message, 0, -1, function(err, uids){
+					for (var i=0; i<uids.length; i++) {
+						wss.sendcmd(uids[i], 'roomdirty');
+					}
+				});
 				break;
 			case 'err':
-				//[uid,uid,...]
-				if (message.length > 0) {
-					var uids = message.split(',');
-					for (var i=0; i<uids.length; i++) {
-						wss.sendcmd(uids[i], 'joinfail');
-					}
-				}
-				break;
-			case 'timeout':
-				//[uid,uid,...]
-				if (message.length > 0) {
-					var uids = message.split(',');
-					for (var i=0; i<uids.length; i++) {
-						wss.sendcmd(uids[i], 'searchfail');
-					}
-				}
+				var uid_err = message.split('$');
+				wss.sendcmd(uid_err[0], uid_err[1]);
 				break;
 		}
 	}
@@ -349,7 +328,9 @@ wss.on('connection', function(ws) {
 					db.hset('role:'+uid, 'LastTime', Date.now())
 				});
 			}
-			db.get('roomid:'+uid, function(err,roomid){
+
+			// going offline, tell others in the room
+			db.hget('role:'+uid, 'Room', function(err,roomid){
 				if (roomid) {
 					roommsg(roomid, 'off', {uid:uid});
 				}
@@ -494,11 +475,27 @@ wss.on('connection', function(ws) {
 		}
 
 		function incrGameState (trans, key, val, cb) {
-			trans.hincrby('gamestate', key, val, check(cb));
+			trans.hincrby('gamestate1', key, val, check(function(){
+				trans.hincrby('gamestate2', key, val, check(function(){
+					trans.hincrby('gamestate3', key, val, check(function(){
+						trans.hincrby('gamestate4', key, val, check(function(){
+							cb();
+						}));
+					}));
+				}));
+			}));
 		}
 
 		function setGameState (trans, key, val, cb) {
-			trans.hset('gamestate', key, val, check(cb));
+			trans.hset('gamestate1', key, val, check(function(){
+				trans.hset('gamestate2', key, val, check(function(){
+					trans.hset('gamestate3', key, val, check(function(){
+						trans.hset('gamestate4', key, val, check(function(){
+							cb();
+						}));
+					}));
+				}));
+			}));
 		}
 
 		function finishMission (trans, id, key, buf, cb) {
@@ -1029,7 +1026,25 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function updateMap(trans, mapid, info, cb) {
+		// update gamestate: kill/exboss/mp/sp
+		function updateMapGameState (trans, info, cb) {
+			incrGameState(trans, 'kill', info.kill, function(){
+				incrGameState(trans, 'exboss', info.exboss, function(){
+					var map = table.map[info.mapId];
+					if (map.Type==1 || map.Type==2 || map.Type==3) {
+						incrGameState(trans, 'sp', 1, cb);
+					} else if (map.Type==4 || map.Type==5) {
+						incrGameState(trans, 'mp', 1, cb);
+					} else {
+						cb();
+					}
+				});
+			});
+		}
+
+		function updateMap(trans, info, cb) {
+			mapid = info.mapId;
+
 			// map:uid {mapid:bitmap}
 			db.hget('map:'+trans.uid, mapid, check(function(mapmission){
 
@@ -1068,13 +1083,15 @@ wss.on('connection', function(ws) {
 				mstate |= 4<<grade;
 				var newmission = mapmission | mstate;
 				trans.hincrby('map', mapid+':cnt', 1, check(function(){	// incr map count
-					if (first || newmission != mapmission) {
-						trans.hset('map', mapid, newmission, check(function(){
+					updateMapGameState(trans, info, function(){
+						if (first || newmission != mapmission) {
+							trans.hset('map', mapid, newmission, check(function(){
+								cb();
+							}));
+						} else {
 							cb();
-						}));
-					} else {
-						cb();
-					}
+						}
+					});
 				}));
 			}));
 		}
@@ -1345,54 +1362,85 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function makeroom (uid, mapid) {
-			db.incr('next_room_id', check2(function(newid){
-				db.multi()
-				.set('roomid:'+uid, newid)
-				.set('roommap:'+newid, mapid)
-				.lpush('room:'+newid, uid)
-//				.expire('roomid:'+uid, 1800)	//TODO: real expire time
-//				.expire('room:'+newid, 1800)
-				.exec(checklist(3,function(data){
-					sendobj({room:{roomid:newid, userid:[uid]}});
+		function recruitRoom (uid, lvmin, lvmax) {
+			db.hget('role:'+uid, 'Room', check2(function(roomid){
+				db.hget('roominfo', roomid, check2(function(roomstr){
+					var roominfo = JSON.parse(roomstr);
+					roominfo.lvmin = lvmin;
+					roominfo.lvmax = lvmax;
+					roominfo.recruit = true;
+
+					// update roominfo
+					db.hset('roominfo', roomid, JSON.stringify(roominfo), check(function(){
+						db.zadd('roomqueue', roominfo.time, roomid, check(function(){		
+							sendobj({roominfo:roominfo});
+						}));
+					}));
 				}));
 			}));
 		}
 
-		function quitroom (uid, cb) {
-			db.get('roomid:'+uid, check(function(roomid){
-				if (!roomid) {
-					cb(uid, roomid);
+		function makeRoom (uid, mapid) {
+			db.hget('role:'+uid, 'Room', check(function(alreadyin){
+				if (alreadyin) {
+					senderr('room_err');
 					return;
 				}
 
-				console.log('quitroom',uid,roomid);
-				db.lrange('room:'+roomid, 0, -1, check(function(room){
-					// not in this room
-					if (room.indexOf(uid) == -1) {
-						db.del('roomid:'+uid, check(function(){
-							cb(uid,roomid);
-						}));
-						return;
-					}
+				db.spop('roomfree', check2(function(newid){
+					db.sadd('roomused', newid, check(function(){
+						var roominfo = new Room({id:newid, mapid:mapid});
 
-					if (room.length<=1) { // destroy the room if it's empty
 						db.multi()
-						.del('room:'+roomid)
-						.del('roommap:'+roomid)
-						.del('roomid:'+uid)
-						.exec(checklist(3,function(){
-							cb(uid,roomid);
+						.hset('role:'+uid, 'Room', newid)	// role:uid : {Room : int}
+						.hset('roominfo', newid, JSON.stringify(roominfo))	// roominfo : {roomid : json} 
+						.lpush('room:'+newid, uid)			// room : [uid]
+						.exec(check(function(){				// roomqueue : roomid
+							db.zadd('roomqueue', roominfo.time, newid, check(function(){		
+								sendobj({role:{Room:newid}, roominfo:roominfo, room:[uid]});
+							}));
 						}));
-					} else { // tell others that I left the room
-						db.multi()
-						.del('roomid:'+uid)
-						.lrem('room:'+roomid, 1, uid)
-						.exec(checklist(2,function(){
-							cb(uid,roomid);
-						}));
-					}
+					}));
 				}));
+			}));
+		}
+
+		function quitRoom (uid) {
+			db.hget('role:'+uid, 'Room', check2(function(roomid){
+				db.hget('roominfo', roomid, check2(function(roomstr){
+					var room = JSON.parse(roomstr);
+
+					db.multi()
+					.hdel('role:'+uid, 'Room')		// role:uid : {Room : null}
+					.lrem('room:'+roomid, 0, uid)	// room : delete [uid]
+					.lrange('room:'+roomid, 0, -1)
+					.exec(check(function(data){
+						db.zadd('roomqueue', room.time, roomid, check(function(){
+							roommsg(roomid, 'quit');
+							sendobj({role:{Room:null}, roominfo:null, room:null}); 
+						}));
+					}));
+				}));
+			}));
+		}
+
+		function joinRoom (uid, mapid, roomid) {
+			db.hmget('role:'+uid, ['Room','Lv'], check(function(room_lv){
+				var alreadyin = room_lv[0];
+				if (alreadyin) {
+					senderr('join_err');
+				} else {
+					var query = {id:uid, mapid:mapid};
+					if (roomid) {	// join
+						query.roomid = roomid;
+					} else {	// recruit, need lv
+						query.lv = room_lv[1];
+					}
+					var searchinfo = new Search(query);
+					db.hset('searchinfo', uid, JSON.stringify(searchinfo), check(function(){ // searchinfo:{uid:json}
+						db.zadd('searchqueue', Date.now(), uid, check(sendnil));
+					}));
+				}
 			}));
 		}
 
@@ -1421,7 +1469,13 @@ wss.on('connection', function(ws) {
 						}
 						if (Object.keys(mod).length > 0) {	// update personal max
 							trans.hmset('role.board', mod, check(function(){
-								cb();
+								if (mod.ScoreMax) {
+
+									// gamestate: maxscore
+									setGameState(trans, 'maxscore', mod.ScoreMax, cb);
+								} else {
+									cb();
+								}
 							}));
 						} else {
 							cb();
@@ -1578,19 +1632,15 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'webrecruit':
-			//@cmd webrecruit
-			//@data roomid
+		case 'recruit':
+			//@cmd recruit
 			//@data lvmin
 			//@data lvmax
-			//@data mapid
 			//@desc 组队募集
 			try {
-				var roomid = msg.data.roomid;
 				var lvmin = msg.data.lvmin;
 				var lvmax = msg.data.lvmax;
-				var mapid = msg.data.mapid;
-				if (!roomid || !lvmin || !lvmax || !mapid) {
+				if (lvmin<1 || lvmax>Const.MAX_LV || lvmax<lvmin) {
 					throw new Error();
 				}
 			} catch (e) {
@@ -1599,11 +1649,7 @@ wss.on('connection', function(ws) {
 			}
 
 			getuser(function(user,uid){
-				var recruitstr = [roomid, lvmin, lvmax, mapid].toString();
-				db.rpush('recruit_write', recruitstr);
-				db.set('recruitinfo:'+roomid, recruitstr, check(function(){
-					sendobj({role:{Recruit:recruitstr}});
-				}));
+				recruitRoom(uid, lvmin, lvmax);
 			});
 			break;
 		case 'makeroom':
@@ -1612,21 +1658,16 @@ wss.on('connection', function(ws) {
 			//@desc 开房间
 			try {
 				var mapid = msg.data.mapid;
+				if (!table.map.hasOwnProperty(mapid)) {
+					throw new Error();
+				}
 			} catch (e) {
 				senderr('data_err');
 				return;
 			}
 
 			getuser(function(user,uid){
-				db.exists('roomid:'+uid, check(function(exist){
-					if (exist) {
-						quitroom(uid, function(){
-							makeroom(uid, mapid);
-						});
-					} else {
-						makeroom(uid, mapid);
-					}	
-				}));
+				makeRoom(uid, mapid);
 			});
 			break;
 		case 'joinroom':
@@ -1637,7 +1678,7 @@ wss.on('connection', function(ws) {
 			try {
 				var roomid = msg.data.roomid;
 				var mapid = msg.data.mapid;
-				if (!roomid || !mapid) {
+				if (!roomid || !table.map.hasOwnProperty(mapid)) {
 					throw new Error();
 				}
 			} catch(e) {
@@ -1646,35 +1687,7 @@ wss.on('connection', function(ws) {
 			}
 
 			getuser(function(user,uid){
-				db.get('roommap:'+roomid, check(function(roommap){
-					if (roommap != mapid) {
-						senderr('wrong_map_err');
-						return;
-					} 
-					var pubstr = [uid,roomid,mapid].toString();
-
-					function doJoin () {
-						db.llen('room:'+roomid, check(function(len){
-							if (len > 0) {	
-								db.rpush('join_write', pubstr);
-							} else {	// join a nonexist room
-								wss.sendcmd(uid, 'joinfail');
-							}
-						}));
-					}
-
-					db.exists('roomid:'+uid, check(function(exist){
-						if (exist) {
-							quitroom(uid, function(){
-								doJoin();
-							});
-						} else {
-							doJoin();
-						}	
-					}));
-
-					sendnil();
-				}));
+				joinRoom(uid, mapid, roomid);
 			});
 			break;
 		case 'searchroom':
@@ -1683,7 +1696,7 @@ wss.on('connection', function(ws) {
 			//@desc 加入随机房间（TODO）
 			try {
 				var mapid = msg.data.mapid;
-				if (!mapid) {
+				if (!table.map.hasOwnProperty(mapid)) {
 					throw new Error();
 				}
 			} catch(e) {
@@ -1692,31 +1705,14 @@ wss.on('connection', function(ws) {
 			}
 
 			getuser(function(user,uid){
-				function doSearch () {
-					db.hget('role:'+uid, 'Lv', check(function(lv){
-						var searchstr = [uid, lv, mapid, Date.now()].toString();
-						db.rpush('search_write', searchstr);
-						sendnil();
-					}));
-				}
-
-				db.exists('roomid:'+uid, check(function(exist){
-					if (exist) {
-						quitroom(uid, doSearch);
-					} else {
-						doSearch();
-					}	
-				}));
+				joinRoom(uid, mapid);
 			});
 			break;
 		case 'quitroom':
 			//@cmd quitroom
 			//@desc 退出当前房间
 			getuser(function(user,uid){
-				quitroom(uid, function(uid,roomid){
-					roommsg(roomid, 'quit');
-					sendnil();
-				});
+				quitRoom(uid);
 			});
 			break;
 		case 'roomchat':
@@ -1724,7 +1720,7 @@ wss.on('connection', function(ws) {
 			//@data msg
 			//@desc 房间内聊天
 			getuser(function(user,uid){
-				db.get('roomid:'+uid, check2(function(roomid){
+				db.hget('role:'+uid, 'Room', check2(function(roomid){
 					sendnil();
 					roommsg(roomid, 'chat', {msg:{ID:uid, msg:msg.data.msg}});
 				}));
@@ -2520,7 +2516,11 @@ wss.on('connection', function(ws) {
 										multi
 										.hmset('girl.'+girlid, modgirl)
 										.exec(checklist(2,function(res){
-											sendobj(trans.obj);
+
+											// gamestate: usemedal
+											incrGameState(trans, 'usemedal', 1, function(){
+												sendobj(trans.obj);
+											});
 										}));
 									} catch (e) {
 										senderr('data_err');
@@ -2862,7 +2862,11 @@ wss.on('connection', function(ws) {
 							updateTeam(function(){
 								updateGirls(function(){
 									updateItems(function(){
-										sendobj(trans.obj);
+
+										// gamestate: evolve
+										incrGameState(trans, 'evolve', 1, function(){
+											sendobj(trans.obj);
+										});
 									});
 								});
 							});
@@ -3147,7 +3151,7 @@ wss.on('connection', function(ws) {
 									addGirls(trans, drop.girl, function() {
 
 										// map mission
-										updateMap(trans, mapid, info, function(){
+										updateMap(trans, info, function(){
 
 											// leader board
 											if (map.Type == Const.INFINITE_MODE_TYPE) {
@@ -3488,12 +3492,17 @@ wss.on('connection', function(ws) {
 						}));
 						break;
 					case 'room':
-						db.get('roomid:'+id, check(function(roomid){
+						db.hget('role:'+id, 'Room', check(function(roomid){
 							if (roomid) {
-								db.lrange('room:'+roomid, 0, -1, check(function(room){
-									db.get('recruitinfo:'+roomid, check(function(recruitstr){
-										sendobj({room:{roomid:roomid, userid:room}, role:{Recruit:recruitstr}});
-									}));
+								db.hget('roominfo', roomid, check(function(roominfostr){
+									if (roominfostr) {
+										var roominfo = JSON.parse(roominfostr);
+										db.lrange('room:'+roomid, 0, -1, check(function(room){
+											sendobj({role:{Room:roomid}, roominfo:roominfo, room:room});
+										}));
+									} else {
+										sendobj({room:null});
+									}
 								}));
 							} else {
 								sendobj({room:null});
