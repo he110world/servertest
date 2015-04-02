@@ -9,7 +9,7 @@ getboard,{"cmd":"getboard";"data":{"type":{0}};"session":{1}},获取排行榜(ty
 getboardgift,{"cmd":"getboardgift";"session":{0}},获取排行榜奖励
 getrank,{"cmd":"getrank";"session":{0}},获取自己的积分和贡献度排名:role:{board:{ScoreRank 和 ContribRank}}
 setroomteam,{"cmd":"setroomteam";"data":{"teamid":{0}};"session":{1}},选择多人模式出击战姬
-webrecruit,{"cmd":"webrecruit";"data":{"roomid":{0};"lvmin":{1};"lvmax":{2};"mapid":{3}};"session":{4}},组队募集
+recruit,{"cmd":"recruit";"data":{"lvmin":{0};"lvmax":{1}};"session":{2}},组队募集
 makeroom,{"cmd":"makeroom";"data":{"mapid":{0}};"session":{1}},开房间
 joinroom,{"cmd":"joinroom";"data":{"roomid":{0};"mapid":{1}};"session":{2}},加入现有房间
 searchroom,{"cmd":"searchroom";"data":{"mapid":{0}};"session":{1}},加入随机房间（TODO）
@@ -18,6 +18,7 @@ roomchat,{"cmd":"roomchat";"data":{"msg":{0}};"session":{1}},房间内聊天
 rename,{"cmd":"rename";"data":{"nickname":{0}};"session":{1}},更改昵称
 ADD_Equip,{"cmd":"ADD_Equip";"data":{"id":{0}};"session":{1}},生成随机装备
 ADD_GirlExp,{"cmd":"ADD_GirlExp";"data":{"id":{0};"count":{1}};"session":{2}},加战姬经验
+SET_GirlLv,{"cmd":"SET_GirlLv";"data":{"id":{0};"lv":{1}};"session":{2}},设置战姬等级（不考虑军衔）
 ADD_RoleExp,{"cmd":"ADD_RoleExp";"data":{"count":{0}};"session":{1}},加角色经验
 ADD_Item,{"cmd":"ADD_Item";"data":{"id":{0};"count":{1}};"session":{2}},加物品
 randombuddy,{"cmd":"randombuddy";"session":{0}},随机选择3个玩家，返回userId
