@@ -202,7 +202,7 @@ function findRoom (player, cursor, cb) {
 
 function enterRoom (player, room, cb) {
 	var roomkey = 'room:'+room.id;
-	db.lpush(roomkey, player.id, function(err,cnt){
+	db.rpush(roomkey, player.id, function(err,cnt){
 		if (cnt > 4) {	// room full
 			db.lrem(roomkey, 0, player.id, function(){
 				if (player.search) {

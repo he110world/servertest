@@ -29,20 +29,6 @@ var Room = require('./room');
 var Search = require('./search');
 var moment = require('moment');
 var sectionDifficultyTable = genSDT();
-var gameStateTable = [	//gamestate[mission.FinishCondition]
-	,				// 0
-	,				// 1
-	'teamof4',		// 2
-	'evolve',		// 3
-	,				// 4
-	'kill',			// 5
-	'usemedal',		// 6
-	'maxscore',		// 7
-	'mp',			// 8
-	'exboss',		// 9
-	'scorerank',	// 10
-	'contrib'		// 11
-	];
 
 // init mission constants
 var missionCnt, noMissionBase64;
@@ -475,10 +461,14 @@ wss.on('connection', function(ws) {
 		}
 
 		function incrGameState (trans, key, val, cb) {
-			trans.hincrby('gamestate1', key, val, check(function(){
-				trans.hincrby('gamestate2', key, val, check(function(){
-					trans.hincrby('gamestate3', key, val, check(function(){
-						trans.hincrby('gamestate4', key, val, check(function(){
+			if (!val) {
+				cb();
+				return;
+			}
+			trans.hincrby('gamestate.1', key, val, check(function(){
+				trans.hincrby('gamestate.2', key, val, check(function(){
+					trans.hincrby('gamestate.3', key, val, check(function(){
+						trans.hincrby('gamestate.4', key, val, check(function(){
 							cb();
 						}));
 					}));
@@ -486,21 +476,38 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function setGameState (trans, key, val, cb) {
-			trans.hset('gamestate1', key, val, check(function(){
-				trans.hset('gamestate2', key, val, check(function(){
-					trans.hset('gamestate3', key, val, check(function(){
-						trans.hset('gamestate4', key, val, check(function(){
-							cb();
-						}));
+		function setGameStateN (trans, n, key, val, greater, cb) {
+			db.hget('gamestate.'+n+':'+trans.uid, key, check(function(oldval){
+				if ((greater && val > oldval) || (!greater && val < oldval)) {
+					trans.hset('gamestate.'+n, key, val, check(function(){
+						cb();
 					}));
-				}));
+				} else {
+					cb();
+				}
 			}));
+		}
+
+		function setGameState (trans, key, val, greater, cb) {
+			if (!val) {
+				cb();
+				return;
+			}
+			setGameStateN(trans, 1, key, val, greater, function(){
+				setGameStateN(trans, 1, key, val, greater, function(){
+					setGameStateN(trans, 1, key, val, greater, function(){
+						setGameStateN(trans, 1, key, val, greater, function(){
+							cb();
+						});
+					});
+				});
+			});
 		}
 
 		function finishMission (trans, id, key, buf, cb) {
 			setMissionState(buf, id);
 			var base64 = encodeMission(buf);
+			console.log(base64,buf);
 			db.hset(key, trans.uid, base64, check(function(){
 				var clientkey = key.split(':')[0];
 				trans.client().set(clientkey, base64);
@@ -575,41 +582,31 @@ wss.on('connection', function(ws) {
 						senderr('mission_err');
 					}
 				}));
-			} else if (cond == 4) {
-				db.hmget('gamestate:'+uid, ['sp','mp'], check(function(sp_mp){
-					if (Math.floor(sp_mp[0]) + Math.floor(sp_mp[1]) >= val) {
+			} else {
+				db.hget('gamestate.'+mission.TimeType+':'+uid, cond, check(function(state){
+					var leq = cond==10;
+					if ((!leq && state >= val) || (leq && state <= val)) {
 						cb();
 					} else {
 						senderr('mission_err');
 					}
 				}));
-			} else {
-				var leq = cond==10 || cond==11;
-				var gamestate = gameStateTable[cond];
-				if (gamestate) {
-					db.hget('gamestate:'+uid, gamestate, check(function(stateval){
-						console.log(gamestate,stateval,val);
-						if ((!leq && stateval >= val) || (leq && stateval <= val)) {
-							cb();
-						} else {
-							senderr('mission_err');
-						}
-					}));
-				}
-			}
+			} 
 		}
 
 		function decodeMission (base64str, cnt) {
+			console.log(base64str, cnt);
 			var buf;
 			if (!base64str) {	// empty
 				buf = new Buffer(Math.ceil(cnt/8));
 				buf.fill(0);
 			} else {
 				buf = new Buffer(base64str, 'base64');
-				if (buf.length < cnt) {
-					var pending = new Buffer(cnt - buf.length);
+				var len = buf.length * 8;
+				if (len < cnt) {
+					var pending = new Buffer(cnt - len);
 					pending.fill(0);
-					buf = Buffer.concat(buf, pending);
+					buf = Buffer.concat([buf, pending]);
 				}
 			}
 			return buf;
@@ -660,18 +657,18 @@ wss.on('connection', function(ws) {
 			// refreshed at 5 a.m.
 			var keyname;
 			if (timeType == 1) {	// once
-				keyname = 'mission.once';
+				keyname = 'mission.1';
 			} else {
 				var time = moment().subtract(Const.MISSION_RESET_HOUR, 'hour');
 				switch (timeType) {
 					case 2:	// daily
-						keyname = 'mission.day:'+time.format('YYYYMMDD');
+						keyname = 'mission.2:'+time.format('YYYYMMDD');
 						break;
 					case 3:	// weekly
-						keyname = 'mission.week:'+time.format('YYYYw');
+						keyname = 'mission.3:'+time.format('YYYYw');
 						break;
 					case 4:	// monthly
-						keyname = 'mission.month:'+time.format('YYYYMM');
+						keyname = 'mission.4:'+time.format('YYYYMM');
 						break;
 				}
 			}
@@ -681,9 +678,9 @@ wss.on('connection', function(ws) {
 		function getMissionKeys () {
 			var time = moment().subtract(Const.MISSION_RESET_HOUR, 'hour');
 			return {
-				day:'mission.day:'+time.format('YYYYMMDD'),
-				week:'mission.week:'+time.format('YYYYw'),
-				month:'mission.month:'+time.format('YYYYMM')
+				day:'mission.2:'+time.format('YYYYMMDD'),
+				week:'mission.3:'+time.format('YYYYw'),
+				month:'mission.4:'+time.format('YYYYMM')
 			};
 		}
 
@@ -926,6 +923,10 @@ wss.on('connection', function(ws) {
 		}
 
 		function useActiveItem (trans, map, items, cb) {
+			if (typeof items !== 'object') {
+				cb();
+				return;
+			}
 			db.hget('activeitem:'+trans.uid, 'ID', check(function(activeid){
 				var exp = map.Exp;
 
@@ -1028,16 +1029,16 @@ wss.on('connection', function(ws) {
 
 		// update gamestate: kill/exboss/mp/sp
 		function updateMapGameState (trans, info, cb) {
-			incrGameState(trans, 'kill', info.kill, function(){
-				incrGameState(trans, 'exboss', info.exboss, function(){
-					var map = table.map[info.mapId];
-					if (map.Type==1 || map.Type==2 || map.Type==3) {
-						incrGameState(trans, 'sp', 1, cb);
-					} else if (map.Type==4 || map.Type==5) {
-						incrGameState(trans, 'mp', 1, cb);
-					} else {
-						cb();
-					}
+			incrGameState(trans, 5, info.kill, function(){
+				incrGameState(trans, 9, info.exboss, function(){
+					incrGameState(trans, 4, 1, function(){	// mp or sp map
+						var map = table.map[info.mapId];
+						if (map.Type==4 || map.Type==5) {
+							incrGameState(trans, 8, 1, cb);
+						} else {
+							cb();
+						}
+					});
 				});
 			});
 		}
@@ -1457,29 +1458,40 @@ wss.on('connection', function(ws) {
 						if (newscore > highscore) {
 							mod.ScoreMax = newscore;
 						}
+						console.log(newcontrib, highcontrib);
 						if (newcontrib > highcontrib) {
 							mod.ContribMax = newcontrib;
 						}
 
-						if (newscore > oldscore) {
-							db.zadd('score', addTimeStamp(newscore), uid);
-						}
 						if (addcontrib > 0) {
 							db.zadd('contrib', addTimeStamp(newcontrib), uid);
 						}
-						if (Object.keys(mod).length > 0) {	// update personal max
-							trans.hmset('role.board', mod, check(function(){
-								if (mod.ScoreMax) {
 
-									// gamestate: maxscore
-									setGameState(trans, 'maxscore', mod.ScoreMax, cb);
-								} else {
-									cb();
-								}
+						var setScore = function () {
+							db.zrevrank('score', uid, check(function(newrank){
+								// gamestaet: score
+								setGameState(trans, 10, newrank, false, function(){
+									if (Object.keys(mod).length > 0) {	// update personal max
+										trans.hmset('role.board', mod, check(function(){
+											cb();
+										}));
+									} else {
+										cb();
+									}
+								});
 							}));
-						} else {
-							cb();
 						}
+
+						// gamestate: contrib
+						setGameState(trans, 11, newcontrib, true, function(){
+							if (newscore > oldscore) {
+								db.zadd('score', addTimeStamp(newscore), uid, check(function(){
+									setScore();
+								}));
+							} else {
+								setScore();
+							}
+						});
 					}));
 				}));
 			}));
@@ -1535,10 +1547,9 @@ wss.on('connection', function(ws) {
 				}
 
 				var trans = new Transaction(db, uid);
-				setGameState(trans, state, val, function(){
+				setGameState(trans, state, val, true, function(){
 					sendobj(trans.obj);
 				});
-
 			});
 			break;
 
@@ -2518,7 +2529,7 @@ wss.on('connection', function(ws) {
 										.exec(checklist(2,function(res){
 
 											// gamestate: usemedal
-											incrGameState(trans, 'usemedal', 1, function(){
+											incrGameState(trans, 6, 1, function(){
 												sendobj(trans.obj);
 											});
 										}));
@@ -2864,7 +2875,7 @@ wss.on('connection', function(ws) {
 									updateItems(function(){
 
 										// gamestate: evolve
-										incrGameState(trans, 'evolve', 1, function(){
+										incrGameState(trans, 3, 1, function(){
 											sendobj(trans.obj);
 										});
 									});
@@ -3266,6 +3277,18 @@ wss.on('connection', function(ws) {
 					console.log(e);
 					return;
 				}
+				var finish = function (trans) {
+					db.llen('team.'+team_t+':'+uid, check(function(len){
+						if (len == 4) {
+							// 4 girls in a team
+							setGameStateN(trans, 1, 2, 1, true, function(){
+								sendobj(trans.obj);
+							});
+						} else {
+							sendobj(trans.obj);
+						}
+					}));
+				}
 				db.hmget('girl.'+girl_s+':'+uid, ['ID','Team'], checklist(2,function(girl){
 					var ID = girl[0];
 					var team_s = girl[1];
@@ -3287,7 +3310,7 @@ wss.on('connection', function(ws) {
 									.lrange('team.'+team_s,0,-1)		// update old list
 									.hset('girl.'+girl_s, 'Team', 0)	// set Team to 0
 									.exec(check(function(){
-										sendobj(trans.obj);
+										finish(trans);
 									}));
 								}
 							}));
@@ -3308,7 +3331,7 @@ wss.on('connection', function(ws) {
 										.rpush('team.'+team_t, girl_s)
 										.lrange('team.'+team_t, 0, -1)
 										.exec(check(function(){
-											sendobj(trans.obj);
+											finish(trans);
 										}));
 									}
 								} else {
@@ -3324,7 +3347,7 @@ wss.on('connection', function(ws) {
 												.lrange('team.'+team_t,0,-1)
 												.hset('girl.'+girl_s, 'Team', team_t)
 												.exec(check(function(){
-													sendobj(trans.obj);
+													finish(trans);
 												}));
 											}
 										}));
@@ -3334,7 +3357,7 @@ wss.on('connection', function(ws) {
 										.lrange('team.'+team_t,0,-1)
 										.hset('girl.'+girl_s, 'Team', team_t)
 										.exec(check(function(){
-											sendobj(trans.obj);
+											finish(trans);
 										}));
 									}
 								}
@@ -3360,7 +3383,7 @@ wss.on('connection', function(ws) {
 												trans.client().set('team.'+team_t, list_t);
 												trans.client().set('team.'+team_s, list_s);
 											}
-											sendobj(trans.obj);
+											finish(trans);
 										}));
 									}));
 								} else {	// 0->t
@@ -3371,7 +3394,7 @@ wss.on('connection', function(ws) {
 									.exec(check(function(){
 										list_t[pos_t] = girl_s;
 										trans.client().set('team.'+team_t, list_t);
-										sendobj(trans.obj);
+										finish(trans);
 									}));
 								}
 							}
@@ -3464,7 +3487,7 @@ wss.on('connection', function(ws) {
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip girlequip gift maps（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
+			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip girlequip gift maps gamestate mission missionexpire（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 			getuser(function(user, id){
 				var viewname = msg.data.name;
 				var trans = new Transaction(db, id);
@@ -3552,9 +3575,20 @@ wss.on('connection', function(ws) {
 							sendobj(trans.obj);
 						}));
 						break;
+					case 'gamestate':
+						trans.hgetall('gamestate.1', check(function(gs1){
+							trans.hgetall('gamestate.2', check(function(gs2){
+								trans.hgetall('gamestate.3', check(function(gs3){
+									trans.hgetall('gamestate.4', check(function(gs4){
+										sendobj(trans.obj);
+									}));
+								}));
+							}));
+						}));
+						break;
 					case 'mission':
 						var keys = getMissionKeys();
-						db.hget('mission.once', id, check(function(once){
+						db.hget('mission.1', id, check(function(once){
 							db.hget(keys.day, id, check(function(day){
 								db.hget(keys.week, id, check(function(week){
 									db.hget(keys.month, id, check(function(month){
@@ -3562,7 +3596,7 @@ wss.on('connection', function(ws) {
 										day = day || noMissionBase64;
 										week = week || noMissionBase64;
 										month = month || noMissionBase64;
-										var obj = {once:once, day:day, week:week, month:month};
+										var obj = {1:once, 2:day, 3:week, 4:month};
 										sendobj({mission:obj});
 									}));
 								}));
