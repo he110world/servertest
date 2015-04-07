@@ -31,12 +31,14 @@ server.on('message', function (msg, remote) {
 	if (type == MsgType.REG) {
 		var uid = msg.readInt32LE(2);
 		endpoints[uid] = remote;
+//		console.log('reg:',uid);
 		server.send(msg, 0, msg.length, remote.port, remote.address);
 
-		console.log(remote);
+//		console.log(remote);
 
 	} else if (type == MsgType.UNREG) {
 		var uid = msg.readInt32LE(2);
+		//console.log('unreg:',uid);
 		delete endpoints[uid];
 	} else if (type == MsgType.QRY) {
 		var uid = msg.readInt32LE(6);
@@ -52,16 +54,17 @@ server.on('message', function (msg, remote) {
 	} else if (type == MsgType.DEBUG) {
 		console.log('%s dbg: %s', msg.readInt32LE(2), msg.toString('ascii',12));
 	} else {	// relay
-		var uid = msg.readInt32LE(6);
-		var ep = endpoints[uid];
+		var srcuid = msg.readInt32LE(2);
+		var dstuid = msg.readInt32LE(6);
+		var ep = endpoints[dstuid];
 		if (ep) {
-			/*
-			if (type == MsgType.MSG) {
-				console.log('msg -> %s', uid);
+/*			if (type == MsgType.MSG) {
+			//	console.log('msg -> %s', uid);
 			} else {
-				console.log('relay', uid, ep);
+				console.log(srcuid + ' -> ' + dstuid);
+			//	console.log('relay', uid, ep);
 			}
-			*/
+*/
 			server.send(msg, 0, msg.length, ep.port, ep.address);
 		}
 	}

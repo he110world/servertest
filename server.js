@@ -970,9 +970,9 @@ wss.on('connection', function(ws) {
 			var query = ['Lv', 'RoleExp'];
 			db.hmget('role:'+uid, query, checklist(query.length,function(data){
 				var role = new Role(table);
-				var oldLv = data[0];
+				var oldLv = Math.floor(data[0]);
 				role.Lv = oldLv;
-				role.RoleExp = data[1];
+				role.RoleExp = Math.floor(data[1]);
 				try {
 					var mod = role.addExp(expinc);
 					trans.hmset('role', mod, check(function(){
@@ -3614,10 +3614,12 @@ wss.on('connection', function(ws) {
 		case 'regUDID':
 			//@cmd regUDID
 			//@data udid
+			//@data machineID
 			//@nosession
 			//@desc 注册用户
 			try {
 				var user = msg.data.udid;
+				var machineID = msg.data.machineID;
 				if (!user) {
 					throw new Error();
 				}
@@ -3639,13 +3641,15 @@ wss.on('connection', function(ws) {
 					.hset('handover2uid', handover.ID, udid+'$'+uid)	//handoverID:udid$uid
 					.hset('redeemowner', newRole.Redeem, uid)			//redeem info
 					.exec(check(function(){
-						db.zadd('rolelv', 1, uid, check(function(){	// add to level:1 set
-							db.zadd('score', 0, uid, check(function(){	// add to score & contrib board
-								db.zadd('contrib', 0, uid, check(function(){
-									addDefaultGirl(uid, sendnil);
+						db.hset('machineinfo', machineID, uid, check(function(){
+							db.zadd('rolelv', 1, uid, check(function(){	// add to level:1 set
+								db.zadd('score', 0, uid, check(function(){	// add to score & contrib board
+									db.zadd('contrib', 0, uid, check(function(){
+										addDefaultGirl(uid, sendnil);
+									}));
 								}));
-							}));
-						}))		
+							}))		
+						}));
 					}));
 				}));
 			}));
@@ -3733,9 +3737,10 @@ wss.on('connection', function(ws) {
 			break;
 		case 'handoverUDID':
 			//@cmd handOverUDID
-			//@data udid
+			//@data newudid
 			//@data handid
 			//@data handpass
+			//@data machineID
 			//@nosession
 			//@desc 账户交接
 			try {

@@ -15,20 +15,28 @@ Role.prototype.newRole = function (id) {
 	this.Redeem = Util.randomString(32);
 }
 
+/*
 Role.prototype.checkVar = function () {
 	for (var i=0; i<arguments.length; i++) {
 		var arg = arguments[i];
-		if (typeof this[arg] == 'undefined') {
+		if (typeof this[arg] === 'undefined') {
 			throw new Error(arg);
+		} else if (isNaN(this[arg])) {
+			this[arg] = 0;
 		}
 	}
 }
+*/
 
 Role.prototype.addExp = function (expInc) {
-	this.checkVar('table', 'RoleExp', 'Lv');
+//	this.checkVar('table', 'RoleExp', 'Lv');
 	var mod = {};
 	var Lv = Math.floor(this.Lv);
-	var newExp = Math.floor(this.RoleExp) + Math.floor(expInc);
+	var oldExp = Math.floor(this.RoleExp);
+	if (isNaN(oldExp)) {
+		oldExp = 0;
+	}
+	var newExp = oldExp + Math.floor(expInc);
 	var ret = Util.updateLevel(newExp, Lv, 999, this.table.exp.RoleExp, 1);
 	Lv = ret[0];
 	newExp = ret[1];

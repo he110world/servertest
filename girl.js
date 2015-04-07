@@ -102,6 +102,7 @@ Girl.prototype.buyGirl = function (table, itemcounts) {
 	return girl.ID;
 }
 
+/*
 Girl.prototype.checkVar = function () {
 	for (var i=0; i<arguments.length; i++) {
 		var arg = arguments[i];
@@ -110,6 +111,7 @@ Girl.prototype.checkVar = function () {
 		}
 	}
 }
+*/
 
 Girl.prototype.addRankExp = function (expInc) {
 	this.checkVar('table', 'RankExp', 'Rank');
@@ -128,12 +130,16 @@ Girl.prototype.addRankExp = function (expInc) {
 }
 
 Girl.prototype.addExp = function (expInc) {
-	this.checkVar('table', 'GirlExp', 'Lv', 'Rank');
+//	this.checkVar('table', 'GirlExp', 'Lv', 'Rank');
 	var mod = {};
 	var Lv = Math.floor(this.Lv);
 	var Rank = Math.floor(this.Rank);
 	var LvLimit = Math.floor(this.table.exp.LvLimit[Rank]);
-	var newExp = Math.floor(this.GirlExp) + Math.floor(expInc);
+	var oldExp = Math.floor(this.GirlExp);
+	if (isNaN(oldExp)) {
+		oldExp = 0;
+	}
+	var newExp = oldExp + Math.floor(expInc);
 	var ret = Util.updateLevel(newExp, Lv, LvLimit, this.table.exp.GirlExp);
 	Lv = ret[0];
 	newExp = ret[1];
