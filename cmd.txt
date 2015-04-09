@@ -46,10 +46,10 @@ addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
 getmissionrwd,{"cmd":"getmissionrwd";"data":{"id":{0}};"session":{1}},领取任务奖励
 getmaprwd,{"cmd":"getmaprwd";"data":{"id":{0};"bit":{1}};"session":{2}},领取地图任务奖励
 finishmap,{"cmd":"finishmap";"data":{"info":{0}};"session":{1}},地图过关（mapid:rank$count）
+BETA_buygirl,{"cmd":"BETA_buygirl";"data":{"item":{0}};"session":{1}},beta版扭蛋
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
 enterteam,{"cmd":"enterteam";"data":{"id":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5;0=>no team)和位置(pos:0-3; index to array)
 leaveteam,{"cmd":"leaveteam";"data":{"id":{0};"teamid":{1}};"session":{2}},将战机id移出teamid
-setteam,{"cmd":"setteam";"data":{"girlid":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5;0=>no team)和位置(pos:0-3; index to array)
 logingift,{"cmd":"logingift";"session":{0}},尝试领取登录奖励
 roommates,{"cmd":"roommates";"data":{"id":{0}};"session":{1}},获取房间玩家队伍信息
 view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：rolegirl room items girls friends pendingfriends follows team equip girlequip gift maps gamestate mission missionexpire（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
