@@ -12,7 +12,8 @@ Role.prototype.newRole = function (id) {
 	this.RoleExp = 0;
 	this.Cost = 50;
 	this.EquipSlot = 30;
-	this.Redeem = Util.randomString(32);
+	this.Redeem = Util.randomString(48);
+	this.NewUser = 1;
 }
 
 /*

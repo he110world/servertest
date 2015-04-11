@@ -30,6 +30,7 @@ server.on('message', function (msg, remote) {
 	//console.log(type);
 	if (type == MsgType.REG) {
 		var uid = msg.readInt32LE(2);
+		remote.time = Date.now();	// timeout: 5s
 		endpoints[uid] = remote;
 //		console.log('reg:',uid);
 		server.send(msg, 0, msg.length, remote.port, remote.address);
@@ -44,7 +45,7 @@ server.on('message', function (msg, remote) {
 		var uid = msg.readInt32LE(6);
 		var ep = endpoints[uid];
 		//console.log(uid,ep);
-		if (ep) {
+		if (ep && Date.now() - ep.time < 5000) {
 			var buf1 = new Buffer(2);
 			var buf2 = new Buffer(ep.address + ':' + ep.port);
 			buf1.writeInt16LE(buf2.length, 0);
@@ -58,13 +59,14 @@ server.on('message', function (msg, remote) {
 		var dstuid = msg.readInt32LE(6);
 		var ep = endpoints[dstuid];
 		if (ep) {
-/*			if (type == MsgType.MSG) {
+			/*
+			if (type == MsgType.MSG) {
 			//	console.log('msg -> %s', uid);
 			} else {
 				console.log(srcuid + ' -> ' + dstuid);
 			//	console.log('relay', uid, ep);
 			}
-*/
+			*/
 			server.send(msg, 0, msg.length, ep.port, ep.address);
 		}
 	}

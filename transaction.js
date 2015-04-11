@@ -11,7 +11,7 @@ function merge(obj, key, value) {
 		return merge(obj, key.split('.'), value);
 	else if (key.length==1 && value!==undefined) {
 		var mobj = obj[key[0]];
-		if (typeof mobj == 'object' && typeof value == 'object') {
+		if (mobj !== null && typeof mobj === 'object' && typeof value === 'object') {
 			for (var v in value) {
 				mobj[v] = value[v];
 			}
@@ -366,7 +366,7 @@ Transaction.prototype.expire = function (key, sec, cb) {
 
 Transaction.prototype.del = function (key, cb) {
 	var fullkey = key+':'+this.uid;
-	this.obj[key] = null;
+	merge(this.obj, key, null);
 	if (this.mul) {
 		this.mul.del(fullkey);
 		this.skipkey();

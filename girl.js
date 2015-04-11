@@ -114,7 +114,7 @@ Girl.prototype.checkVar = function () {
 */
 
 Girl.prototype.addRankExp = function (expInc) {
-	this.checkVar('table', 'RankExp', 'Rank');
+//	this.checkVar('table', 'RankExp', 'Rank');
 	var mod = {};
 	var Rank = Math.floor(this.Rank);
 	var RankLimit = this.table.exp.Rank.length - 1;

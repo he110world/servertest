@@ -43,7 +43,7 @@ var WebSocketServer = require('ws').Server;
 var wss = new WebSocketServer({port: port});
 var uid2ws = {};	// uid->ws
 var ws2uid = {};
-var appid = Util.randomString(32);
+var appid = Util.randomString(64);
 
 // generate section-difficulty LUT
 function genSDT () {
@@ -136,13 +136,12 @@ function publishData (pub, channel, data) {
 }
 
 function HandOver () {
-	this.ID = Util.randomString(32);
+	this.ID = Util.randomString(48);
 	this.Pass = '';
 }
 
 function generateSession (cb) {
-	var session = Util.randomString(32);
-	cb(session);
+	return Util.randomString(128);
 }
 
 function Teammate (uid) {
@@ -300,20 +299,21 @@ wss.on('connection', function(ws) {
 	});
 
 	ws.on('close', function(code, message) {
-		console.log('ws close %s %s', code, message);
+		// delete socket info
 		var uid = ws2uid[ws];
-		if (uid) {
-			if (code == 4001) {	// kick. code 4000-4999 can be used by application.
-				console.log('kick ' + uid);
-			} else {
-				db.get('session:'+uid, function(err,sess) {
-					console.log('close: ' + uid);
-					console.log('close ws %s', uid);
-					delete uid2ws[uid];
-					db.del('session:'+uid, 'sessionuser:'+sess);
-					db.hset('role:'+uid, 'LastTime', Date.now())
-				});
-			}
+		if (!uid) {
+			console.log('invalid close');
+			return;
+		}
+		delete ws2uid[ws];
+		delete uid2ws[uid];
+
+		// record last active time
+		db.hset('role:'+uid, 'LastTime', Date.now())
+
+		// handle session
+		if (code == Const.WS_DISCONNECT) {
+			console.log('%s disconnected', uid);
 
 			// going offline, tell others in the room
 			db.hget('role:'+uid, 'Room', function(err,roomid){
@@ -321,8 +321,45 @@ wss.on('connection', function(ws) {
 					roommsg(roomid, 'off', {uid:uid});
 				}
 			});
-		} else {
-			console.log('invalid close');
+
+			// session timeout
+			db.get('session:'+uid, function(err,sess){
+				if (sess) {
+					db.expire('session:'+uid, 1800);
+					db.expire('sessionuser:'+sess, 1800);
+				}
+			});
+		} else if (code == Const.WS_QUIT || code == Const.WS_KICK) {
+			console.log('%s %s', uid, code==Const.WS_QUIT?'quit':'kicked');
+
+			// delete session
+			db.get('session:'+uid, function(err,sess){
+				db.del('session:'+uid);
+				if (sess) {
+					db.del('sessionuser:'+sess);
+				}
+			});
+
+			// force quit room
+			db.hget('role:'+uid, 'Room', function(err,roomid){
+				if (roomid === null) {
+					return;
+				}
+				db.hget('roominfo', roomid, function(err,roomstr){
+					var room = JSON.parse(roomstr);
+
+					db.multi()
+					.hdel('role:'+uid, 'Room')		// role:uid : {Room : null}
+					.lrem('room:'+roomid, 0, uid)	// room : delete [uid]
+					.llen('room:'+roomid)
+					.exec(function(err,data){
+						db.zadd('roomqueue', room.time, roomid);
+						if (data[2] > 0) {
+							roommsg(roomid, 'quit');
+						}
+					});
+				});
+			});
 		}
 	});
 
@@ -338,7 +375,7 @@ wss.on('connection', function(ws) {
 		}
 
 		function getuser (cb) {
-			if (typeof cb != 'function') {
+			if (typeof cb !== 'function') {
 				return;
 			}
 			var session = msg.session;
@@ -775,7 +812,7 @@ wss.on('connection', function(ws) {
 
 		function doHandOver (handid, handpass, cb) {
 			db.hget('handover2uid', handid, check2(function(udid$uid){
-				var uu = udid$uid.split(':');
+				var uu = udid$uid.split('$');
 				var oldudid = uu[0];
 				if (udid == oldudid) {
 					senderr('same_udid_err');
@@ -1097,15 +1134,31 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
+		function teamCost (team) {
+			var cost = 0;
+			for (var i in team) {
+				var girlid = team[i];
+				var girl = table.girl[girlid];
+				if (girl) {
+					cost += girl.Cost;
+				}
+			}
+
+			return cost;
+		}
+
 		function addDefaultGirl (uid, cb) {
 			var girlid = Const.DEFAULT_GIRL;
 			var girl = new Girl;
 			girl.newGirl(table, girlid);
-			girl.Team = 1;
 			db.multi()
 			.sadd('girls:'+uid, girlid)				// girls
 			.hmset('girl.'+girlid+':'+uid, girl)	// girl
 			.rpush('team.1:'+uid, girlid)			// add to team
+			.rpush('team.2:'+uid, girlid)			// add to team
+			.rpush('team.3:'+uid, girlid)			// add to team
+			.rpush('team.4:'+uid, girlid)			// add to team
+			.rpush('team.5:'+uid, girlid)			// add to team
 			.exec(check(function(){
 				cb();
 			}));
@@ -1407,15 +1460,18 @@ wss.on('connection', function(ws) {
 		}
 
 		function quitRoom (uid) {
-			db.hget('role:'+uid, 'Room', check2(function(roomid){
+			db.hget('role:'+uid, 'Room', check(function(roomid){
+				if (roomid === null) {
+					sendobj({role:{Room:null}, roominfo:null, room:null}); 
+					return;
+				}
 				db.hget('roominfo', roomid, check2(function(roomstr){
 					var room = JSON.parse(roomstr);
 
 					db.multi()
 					.hdel('role:'+uid, 'Room')		// role:uid : {Room : null}
 					.lrem('room:'+roomid, 0, uid)	// room : delete [uid]
-					.lrange('room:'+roomid, 0, -1)
-					.exec(check(function(data){
+					.exec(check(function(){
 						db.zadd('roomqueue', room.time, roomid, check(function(){
 							roommsg(roomid, 'quit');
 							sendobj({role:{Room:null}, roominfo:null, room:null}); 
@@ -2151,7 +2207,7 @@ wss.on('connection', function(ws) {
 			//@cmd friendbrief
 			//@data uids
 			//@desc 好友简要信息（参数：uid$uid$uid...  返回:用户名 等级 队长 最后时间）
-			getuser(function(user, uid){
+//			getuser(function(user, uid){
 				try {
 					var uids = msg.data.uids.toString().split('$');
 				} catch (e) {
@@ -2164,16 +2220,25 @@ wss.on('connection', function(ws) {
 				uids.forEach(function(fid, i){
 					db.hmget('role:'+fid, ['nickname', 'Lv', 'LastTime'], checklist(3, function(data){
 						db.lindex('team.1:'+fid, 0, check(function(girlid){
-							++cnt;
-							obj.friend[fid] = {ID:fid, Nick:data[0], Lv:data[1], LastTime:data[2], Girl:girlid};
-
-							if (cnt == uids.length) {	// done!
-								sendobj(obj);
+							if (girlid === null) {
+								++cnt;
+								if (cnt == uids.length) {
+									sendobj(obj);
+								}
+								return;
 							}
+							db.hget('girl.'+girlid+':'+fid, 'Lv', check(function(girllv){
+								++cnt;
+								obj.friend[fid] = {ID:fid, Nick:data[0], Lv:data[1], LastTime:data[2], Girl:girlid, GirlLv:girllv};
+
+								if (cnt == uids.length) {	// done!
+									sendobj(obj);
+								}
+							}));
 						}));
 					}));
 				});
-			});
+//			});
 			break;
 		case 'frienddetail':
 			//@cmd frienddetail
@@ -2693,7 +2758,8 @@ wss.on('connection', function(ws) {
 						return;
 					}
 				} catch (e) {
-					senderr('data_err:shopid,itemid');
+					senderr('param_err');
+					return;
 				}
 
 				var money = 12000 + shop.Type;
@@ -2835,52 +2901,56 @@ wss.on('connection', function(ws) {
 
 						// team -- array
 						// remove old, add new
-						var updateTeam = function (cb) {
-							if (oldgirl.Team) {
-								db.lrange('team.'+oldgirl.Team+':'+uid, 0, -1, check(function(teamgirls){
-									var idx = teamgirls.indexOf(girlid);
-									if (idx == -1) {
-										senderr('db_err');
-										return;
+						var updateTeam = function (t, maxcost, cb) {
+							db.hget('role:'+uid, 'Cost', check(function(maxcost){
+								var gid = girlid.toString();
+								var teamkey = 'team.'+t+':'+uid;
+								db.lrange(teamkey, 0, -1, check2(function(team){
+									var idx = team.indexOf(gid);
+									if (idx != -1) {
+										team[idx] = newid;
+										if (teamCost(team) > maxcost) {	// > max cost, remove from team
+											delete team[idx];
+											db.lrem(teamkey, 0, girlid, check(function(){
+												trans.client().set('team.'+t, team);
+												cb();
+											}));
+										} else {	// change old id to new id
+											db.lset(teamkey, idx, newid, check(function(){
+												trans.client().set('team.'+t, team);
+												cb();
+											}));
+										}
+									} else {
+										cb();
 									}
-									teamgirls[idx] = newid;
-
-									// check cost
-									db.hget('role:'+uid, 'Cost', check(function(teamcost){
-										var totalcost = 0;
-										for (var t in teamgirls) {
-											totalcost += table.girl[teamgirls[t]].Cost;
-										}
-										if (totalcost > teamcost) {	// over cost -> remove from team
-											delete oldgirl.Team;
-											trans.lrem('team.'+oldgirl.Team, 1, girlid, check(function(){
-												cb();
-											}));
-										} else {
-											trans.lset('team.'+oldgirl.Team, idx, newid, check(function(){
-												cb();
-											}));
-										}
-									}));
 								}));
-							} else {
-								cb();
-							}
+							}));
 						}
 
 						// do the update
 						updateGirlEquips(function(){
-							updateTeam(function(){
-								updateGirls(function(){
-									updateItems(function(){
+							db.hget('role:'+uid, 'Cost', check(function(maxcost){
+								updateTeam(1, maxcost, function(){
+									updateTeam(2, maxcost, function(){
+										updateTeam(3, maxcost, function(){
+											updateTeam(4, maxcost, function(){
+												updateTeam(5, maxcost, function(){
+													updateGirls(function(){
+														updateItems(function(){
 
-										// gamestate: evolve
-										incrGameState(trans, 3, 1, function(){
-											sendobj(trans.obj);
+															// gamestate: evolve
+															incrGameState(trans, 3, 1, function(){
+																sendobj(trans.obj);
+															});
+														});
+													});
+												});
+											});
 										});
 									});
 								});
-							});
+							}));
 						});
 					}));
 				}));
@@ -3182,224 +3252,217 @@ wss.on('connection', function(ws) {
 				});
 			});
 			break;
+
+		case 'BETA_buygirl':
+			//@cmd BETA_buygirl
+			//@data item
+			//@desc beta版扭蛋
 		case 'buygirl':
 			//@cmd buygirl
 			//@data item
 			//@desc 姬娘扭蛋（item格式为{id1:count...idN:count}）
 			getuser(function(user, uid){
+				// used items
+				try {
+					var itemcounts = msg.data.item;
+					if (itemcounts && empty(itemcounts)) {
+						itemcounts = null;
+					}
+				} catch (e) {
+					itemcounts = null;
+				}
+
 				// cost
 				var mod = {};
-				db.hget('item:'+uid, Const.PHOTON_ID, check(function(photon){
-					if (photon < Const.GIRL_PRICE) {
-						senderr('not_enough_item_err');
-					} else {
-						// used items
-						try {
-							var itemcounts = msg.data.item;
-							if (itemcounts && empty(itemcounts)) {
-								itemcounts = null;
+				var canbuy;
+				var cost;
+				var trans = new Transaction(db, uid);
+
+				if (msg.cmd === 'BETA_buygirl') {
+					cost = 0;
+					canbuy = function(cb) {
+						db.hget('betainfo:'+uid, 'recruit', check(function(cnt){
+							if (cnt >= 3) {
+								senderr('buygirl_err');
+							} else {
+								trans.hincrby('betainfo', 'recruit', 1, check(function(){
+									cb();
+								}));
 							}
-						} catch (e) {
-							itemcounts = null;
+						}));
+					}
+				} else {
+					cost = Const.GIRL_PRICE;
+					canbuy = function(cb) {
+						db.hget('item:'+uid, Const.PHOTON_ID, check(function(photon){
+							if (photon < Const.GIRL_PRICE) {
+								senderr('not_enough_item_err');
+							} else {
+								cb();
+							}
+						}));
+					}
+				}
+
+				canbuy(function(){
+					var idlist = [];
+					if (itemcounts) {
+						for (var itemid in itemcounts) {
+							idlist.push(itemid);
 						}
+						db.hmget('item:'+uid, idlist, check(function(countlist){
 
-						var idlist = [];
-						var trans = new Transaction(db, uid);
-						if (itemcounts) {
-							for (var itemid in itemcounts) {
-								idlist.push(itemid);
-							}
-							db.hmget('item:'+uid, idlist, check(function(countlist){
-
-								//enough items?
-								var remaincount = {};
-								for (var i=0; i<idlist.length; i++) {
-									var id = idlist[i];
-									var remain = countlist[i] - itemcounts[id];
-									if (remain < 0) {
-										senderr('not_enough_item_err');
-										return;
-									}
-
-									remaincount[id] = remain;
+							//enough items?
+							var remaincount = {};
+							for (var i=0; i<idlist.length; i++) {
+								var id = idlist[i];
+								var remain = countlist[i] - itemcounts[id];
+								if (remain < 0) {
+									senderr('not_enough_item_err');
+									return;
 								}
 
-								trans.hmset('item', itemcounts, check(function(){
-									try {
-										addGirl(trans, buygirl(), Const.GIRL_PRICE);
-									} catch (e) {
-										senderr('buygirl_err');
-									}
-								}));
-							}));
-						} else {
-							try {
-								addGirl(trans, buygirl(), Const.GIRL_PRICE);
-							} catch (e) {
-								senderr('buygirl_err');
+								remaincount[id] = remain;
 							}
-						}
 
-						function buygirl() {
-							var newGirl = new Girl();
-							return newGirl.buyGirl(table, itemcounts);
+							trans.hmset('item', itemcounts, check(function(){
+								try {
+									addGirl(trans, buygirl(), cost);
+								} catch (e) {
+									senderr('buygirl_err');
+								}
+							}));
+						}));
+					} else {
+						try {
+							addGirl(trans, buygirl(), cost);
+						} catch (e) {
+							senderr('buygirl_err');
 						}
 					}
-				}));
+
+					function buygirl() {
+						var newGirl = new Girl();
+						return newGirl.buyGirl(table, itemcounts);
+					}
+				});
 				// random
 			});
 			break;
-		case 'setteam':
-			//@cmd setteam
-			//@data girlid
+		case 'enterteam':
+			//@cmd enterteam
+			//@data id
 			//@data teamid
 			//@data pos
 			//@desc 设置战姬所属编队(teamid:0-5; 0=>no team)和位置(pos:0-3; index to array)
 			//TODO: cost cap
-			getuser(function(user,uid){
-				/*
-				 * find target team & pos
-				 * swap
-				 */
+			getuser(function(user, uid){
 				try {
-					// _s : source, _t : target
-					var girl_s = msg.data.girlid;
-					var team_t = Math.floor(msg.data.teamid);
-					var pos_t = Math.floor(msg.data.pos);
-					if (team_t<0 || team_t>5) {
+					var g = msg.data.id.toString();
+					var t = Math.floor(msg.data.teamid);
+					var pos = Math.floor(msg.data.pos);
+					if (t<0 || t>5) {
 						throw new Error('invalid_team');
 					}
-					if (pos_t<0 || pos_t>3) {
+					if (pos<0 || pos>3) {
 						throw new Error('invalid_pos');
 					}
 				} catch (e) {
 					senderr('data_err');
-					console.log(e);
 					return;
 				}
-				var finish = function (trans) {
-					db.llen('team.'+team_t+':'+uid, check(function(len){
-						if (len == 4) {
-							// 4 girls in a team
-							setGameStateN(trans, 1, 2, 1, true, function(){
-								sendobj(trans.obj);
-							});
-						} else {
-							sendobj(trans.obj);
-						}
-					}));
-				}
-				db.hmget('girl.'+girl_s+':'+uid, ['ID','Team'], checklist(2,function(girl){
-					var ID = girl[0];
-					var team_s = girl[1];
-					if (ID != girl_s) {
-						senderr('data_err');
-						return;
-					}
-					var trans = new Transaction(db, uid);
 
-					// s->0
-					if (team_t == 0) {
-						if (team_s > 0) {	// s->0
-							db.llen('team.'+team_s+':'+uid, check(function(len){
-								if (len <= 1) {
-									senderr('empty_team_err');
-								} else {
-									trans.multi()
-									.lrem('team.'+team_s, 0, girl_s)
-									.lrange('team.'+team_s,0,-1)		// update old list
-									.hset('girl.'+girl_s, 'Team', 0)	// set Team to 0
-									.exec(check(function(){
-										finish(trans);
-									}));
-								}
+				var teamkey = 'team.'+t+':'+uid;
+				db.lrange(teamkey, 0, -1, check2(function(team){
+					var mod = {team:{}};
+					mod.team[t] = team;
+					var oldpos = team.indexOf(g);
+					if (oldpos != -1) {	// swap inside the team
+						var oldg = team[pos];
+						if (oldg) {	// simple swap
+							team[pos] = g;
+							team[oldpos] = oldg;
+
+							db.multi()
+							.lset(teamkey, pos, g)
+							.lset(teamkey, oldpos, oldg)
+							.exec(check(function(){
+								sendobj(mod);
 							}));
-						} else {	// else 0->0
-							sendnil();
+						} else {	// move to empty pos & shrink
+							team.splice(oldpos, 1);
+							team.push(g);
+
+							db.multi()
+							.lrem(teamkey, 0, g)
+							.rpush(teamkey, g)
+							.exec(check(function(){
+								sendobj(mod);
+							}));
 						}
 					} else {
-						db.lrange('team.'+team_t+':'+uid, 0, -1, check(function(list_t){
-							if (pos_t >= list_t.length) {	// s->t0
-								// IMPORTANT: must use girl_s.toString(): list_t is a array of string, and girl_s is int
-								var s_pos_t = list_t.indexOf(girl_s.toString());	// src pos in target list
-								if (s_pos_t != -1) {	// s->s0	=> move to the end of the list
-									if (s_pos_t == list_t.length-1) {	// already the last => do nothing
-										sendnil();
-									} else {
-										trans.multi()
-										.lrem('team.'+team_t, 0, girl_s)
-										.rpush('team.'+team_t, girl_s)
-										.lrange('team.'+team_t, 0, -1)
-										.exec(check(function(){
-											finish(trans);
-										}));
-									}
+						db.hget('role:'+uid, 'Cost', check2(function(maxcost){
+							if (pos >= team.length) {	//append 
+								team.push(g);
+
+								// check cost
+								if (teamCost(team) > maxcost) {
+									senderr('cost_err');
 								} else {
-									if (team_s > 0) {	// remove from source list
-										db.llen('team.'+team_s+':'+uid, check(function(len){
-											if (len <= 1) {
-												senderr('empty_team_err');
-											} else {
-												trans.multi()
-												.lrem('team.'+team_s, 0, girl_s)	// remove from src list
-												.lrange('team.'+team_s, 0, -1)
-												.rpush('team.'+team_t, girl_s)	// s->t0
-												.lrange('team.'+team_t,0,-1)
-												.hset('girl.'+girl_s, 'Team', team_t)
-												.exec(check(function(){
-													finish(trans);
-												}));
-											}
-										}));
-									} else {
-										trans.multi()
-										.rpush('team.'+team_t, girl_s)	// s->t0
-										.lrange('team.'+team_t,0,-1)
-										.hset('girl.'+girl_s, 'Team', team_t)
-										.exec(check(function(){
-											finish(trans);
-										}));
-									}
-								}
-							} else {	// swap
-								var girl_t = list_t[pos_t];
-								if (team_s > 0) {	// s->t
-									db.lrange('team.'+team_s+':'+uid, 0, -1, check(function(list_s){
-										//IMPORTANT
-										var pos_s = list_s.indexOf(girl_s.toString());
-										trans.multi()
-										.lset('team.'+team_t, pos_t, girl_s)	// sg->t
-										.lset('team.'+team_s, pos_s, girl_t)	// tg->s
-										.hset('girl.'+girl_t, 'Team', team_s)	// st->tg
-										.hset('girl.'+girl_s, 'Team', team_t)	// tt->sg
-										.exec(check(function(){
-											if (team_s == team_t) {	// same team swap
-												list_s[pos_t] = girl_s;
-												list_s[pos_s] = girl_t;
-												trans.client().set('team.'+team_s, list_s);
-											} else {
-												list_t[pos_t] = girl_s;
-												list_s[pos_s] = girl_t;
-												trans.client().set('team.'+team_t, list_t);
-												trans.client().set('team.'+team_s, list_s);
-											}
-											finish(trans);
-										}));
+									db.rpush(teamkey, g, check(function(){
+										sendobj(mod);
 									}));
-								} else {	// 0->t
-									trans.multi()
-									.lset('team.'+team_t, pos_t, girl_s)	// sg->t
-									.hset('girl.'+girl_t, 'Team', 0)		// 0->tg
-									.hset('girl.'+girl_s, 'Team', team_t)	// tt->sg
-									.exec(check(function(){
-										list_t[pos_t] = girl_s;
-										trans.client().set('team.'+team_t, list_t);
-										finish(trans);
+								}
+							} else {	//replace
+								team[pos] = g;
+
+								// check cost
+								if (teamCost(team) > maxcost) {
+									senderr('cost_err');
+								} else {
+									db.lset(teamkey, pos, g, check(function(){
+										sendobj(mod);
 									}));
 								}
 							}
 						}));
 					}
+				}));
+			});
+			break;
+		case 'leaveteam':
+			//@cmd leaveteam
+			//@data id
+			//@data teamid
+			//@desc 将战机id移出teamid
+			getuser(function(user, uid){
+				try {
+					var g = msg.data.id.toString();
+					var t = Math.floor(msg.data.teamid);
+					var pos = Math.floor(msg.data.pos);
+					if (t<0 || t>5) {
+						throw new Error('invalid_team');
+					}
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				var teamkey = 'team.'+t+':'+uid;
+				db.lrange(teamkey, 0, -1, check2(function(team){
+					var oldpos = team.indexOf(g);
+					if (oldpos==-1 || team.length==1) {
+						senderr('leave_err');
+						return;
+					} 
+
+					var mod = {team:{}};
+					mod.team[t] = team;
+					team.splice(oldpos, 1);
+
+					db.lrem(teamkey, 0, g, check(function(){
+						sendobj(mod);
+					}));
 				}));
 			});
 			break;
@@ -3483,15 +3546,67 @@ wss.on('connection', function(ws) {
 				});
 			});
 			break;
+		case 'postmsg':
+			//@cmd postmsg
+			//@desc 提交意见确认
+			getuser(function(user, uid){
+				db.hincrby('betainfo:'+uid, msg, 1, check(function(){
+					sendnil();
+				}));
+			});
+			break;
+		case 'tweet':
+			//@cmd tweet
+			//@desc beta版发推之后调用
+			getuser(function(user, uid){
+				var trans = new Transaction(db, uid);
+				trans.multi()
+				.hincrby('betainfo', 'twitter', 1)
+				.hset('betainfo', 'recruit', 0)
+				.exec(check(function(){
+					sendobj(trans.obj);
+				}));
+			});
+			break;
+		case 'newusergift':
+			//@cmd newusergift
+			//@desc 新手礼包
+			getuser(function(user, uid){
+				db.hget('role:'+uid, 'NewUser', check2(function(newuser){
+					var trans = new Transaction(db, uid);
+					trans.hset('role', 'NewUser', 0, check(function(){
+						sendobj(trans.obj);
+					}));
+				}));
+			});
+			break;
 		case 'view':
 			//@cmd view
 			//@data name
 			//@data id
-			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip girlequip gift maps gamestate mission missionexpire（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
+			//@desc 查看数据：role girl room items girls friends pendingfriends follows team equip girlequip gift maps gamestate mission missionexpire handover（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 			getuser(function(user, id){
-				var viewname = msg.data.name;
+				try {
+					var viewname = msg.data.name;
+				} catch (e) {
+					console.log(e);
+					senderr('param_err');
+					return;
+				}
 				var trans = new Transaction(db, id);
 				switch (viewname) {
+					case 'betainfo':	// BETA: free recruit count
+						trans.hgetall('betainfo', check(function(betainfo){
+							if (betainfo === null) {	// no beta info yet
+								betainfo = {recruit:0, twitter:0};
+								trans.hmset('betainfo', betainfo, check(function(){
+									sendobj(trans.obj);
+								}));
+							} else {
+								sendobj(trans.obj);
+							}
+						}));
+						break;
 					case 'handover':
 						trans.hgetall('handover', check(function(){
 							sendobj(trans.obj);
@@ -3618,16 +3733,16 @@ wss.on('connection', function(ws) {
 			//@nosession
 			//@desc 注册用户
 			try {
-				var user = msg.data.udid;
+				var udid = msg.data.udid;
 				var machineID = msg.data.machineID;
-				if (!user) {
+				if (!udid) {
 					throw new Error();
 				}
 			} catch (e) {
 				senderr('msg_err');
 				return;
 			}
-			db.sadd('udids', user, check2err('udid_exist',function(){
+			db.sadd('udids', udid, check2err('udid_exist',function(){
 				db.incr('next_account_id', check(function(uid){
 					// create role
 					var newRole = new Role();
@@ -3635,89 +3750,86 @@ wss.on('connection', function(ws) {
 					var handover = new HandOver();
 
 					db.multi()
-					.set('accountid:'+user, uid)
+					.set('accountid:'+udid, uid)
 					.hmset('role:'+uid, newRole)
 					.hmset('handover:'+uid, handover)
 					.hset('handover2uid', handover.ID, udid+'$'+uid)	//handoverID:udid$uid
 					.hset('redeemowner', newRole.Redeem, uid)			//redeem info
+					.hset('machine2uid', machineID, uid)
+					.hset('uid2machine', uid, machineID)
 					.exec(check(function(){
-						db.hset('machineinfo', machineID, uid, check(function(){
-							db.zadd('rolelv', 1, uid, check(function(){	// add to level:1 set
-								db.zadd('score', 0, uid, check(function(){	// add to score & contrib board
-									db.zadd('contrib', 0, uid, check(function(){
-										addDefaultGirl(uid, sendnil);
-									}));
+						db.zadd('rolelv', 1, uid, check(function(){	// add to level:1 set
+							db.zadd('score', 0, uid, check(function(){	// add to score & contrib board
+								db.zadd('contrib', 0, uid, check(function(){
+									addDefaultGirl(uid, sendnil);
 								}));
-							}))		
-						}));
+							}));
+						}))		
 					}));
 				}));
 			}));
+			break;
+		case 'reconnect':
+			//@cmd reconnect
+			//@desc 断线重连
+			getuser(function(user, uid){
+				console.log('%s reconnect', uid);
+
+				db.persist('session:'+uid);
+				db.persist('sessionuser:'+msg.session);
+
+				uid2ws[uid] = ws;
+				ws2uid[ws] = uid;
+				sendnil();
+			});
 			break;
 		case 'loginUDID':
 			//@cmd loginUDID
 			//@data udid
 			//@nosession
 			//@desc 登录
+			if (ws2uid[ws]) {
+				senderr('already_loggedin_err');
+				return;
+			}
+
 			try {
-				var user = msg.data.udid;
-				if (!user) {
+				var udid = msg.data.udid;
+				if (!udid) {
 					throw new Error();
 				}
 			} catch (e) {
 				senderr('msg_err');
 				return;
 			}
-			console.log('%s login', user);
-			
-			// user/pass valid?
-			db.get('accountid:'+user, check2(function(uid){
 
-				// session exist - multiple logins
-				db.get('session:'+uid, check(function(oldsess){
-					var ok = true;
+			console.log('%s login', udid);
+
+			// check user / pass
+			db.get('accountid:'+udid, check2(function(uid){
+				var session = generateSession();
+				db.getset('session:'+uid, session, check(function(oldsess){
+					// session exists - multiple logins / server crash / disconnected
 					if (oldsess) {
-						// kick the prev user
-						var prevws = uid2ws[uid];
-						if (prevws) {	// same machine
-							if (prevws != ws) {
-								if (prevws.readyState != ws.CLOSED) {
-									// kick
-									prevws.close(4001);
-									console.log('kick1 %s', uid);
-									removeWs(prevws);
-								} else {
-									console.log('update %s', uid);
-									updateWs(prevws, ws, uid);
-								}
-							} else {
-								senderr('already_loggedin_err');
-								ok = false;
-							}
-						} else {
-							kickmsg(uid);
+						db.del('sessionuser:'+oldsess);
+						var oldws = uid2ws[uid];
+						if (oldws) {
+							delete ws2uid[ws];
 						}
-					} 
-					if (ok) {
-						generateSession(function(session){
-							// destroy previous sessionuser
-							db.getset('session:'+uid, session, check(function(oldsession){
-								db.multi()
-								.del('sessionuser:'+oldsession)
-								.set('sessionuser:'+session, user)
-								.hset('role:'+uid, 'LastTime', Date.now())
-								.exec(checklist(3,function(res){
-									uid2ws[uid] = ws;
-									ws2uid[ws] = uid;
-									sendobj({session:session});
-								}));
-							}));
-						});	
+						// no need to kick: session err will do the trick
 					}
+					db.multi()
+					.set('sessionuser:'+session, udid)
+					.hset('role:'+uid, 'LastTime', Date.now())
+					.exec(check(function(){
+						uid2ws[uid] = ws;
+						ws2uid[ws] = uid;
+						sendobj({session:session});
+					}));
 				}));
 			}));
 			break;
-		case 'getHandoverUid':
+		case 'getHandOverUid':
 			//@cmd getHandOverUid
 			//@data handid
 			//@data handpass
@@ -3735,7 +3847,7 @@ wss.on('connection', function(ws) {
 				sendtemp({handto:uid});
 			});
 			break;
-		case 'handoverUDID':
+		case 'handOverUDID':
 			//@cmd handOverUDID
 			//@data newudid
 			//@data handid
@@ -3744,25 +3856,34 @@ wss.on('connection', function(ws) {
 			//@nosession
 			//@desc 账户交接
 			try {
-				var udid = msg.data.udid;
+				var udid = msg.data.newudid;
 				var handid = msg.data.handid;
 				var handpass = msg.data.handpass;
+				var machineID = msg.data.machineID;
+				if (!udid || !handid || !handpass || !machineID) {
+					throw new Error();
+				}
 			} catch (e) {
 				senderr('msg_err');
 				return;
 			}
 			//handid => udid
 			doHandOver(handid, handpass, function(oldudid, uid){
-				db.multi()
-				.hset('handover2uid', handid, udid+':'+uid)
-				.srem('udids', oldudid)
-				.sadd('udids', udid)
-				.set('accountid:'+udid, uid)
-				.del('accountid:'+oldudid)
-				.exec(check(function(){
-					// kick old user
-					kickall(uid);
-					sendnil();
+				db.hget('uid2machine', uid, check2(function(oldMachineID){
+					db.multi()
+					.hset('handover2uid', handid, udid+':'+uid)
+					.srem('udids', oldudid)
+					.sadd('udids', udid)
+					.set('accountid:'+udid, uid)
+					.del('accountid:'+oldudid)
+					.hdel('machine2uid', oldMachineID)
+					.hset('machine2uid', machineID, uid)
+					.hset('uid2machine', uid, machineID)
+					.exec(check(function(){
+						// kick old user
+						kickall(uid);
+						sendnil();
+					}));
 				}));
 			});
 			break;
@@ -3799,28 +3920,28 @@ wss.on('connection', function(ws) {
 			var pass = msg.data.pass;
 			if (!pass) {
 				senderr('empty_pass_err');
-			} else {
-				db.sadd('usernames', user, check2err('user_exist',function(){
-					db.multi()
-					.incr('next_account_id')
-					.set('user:'+user, pass)
-					.exec(checklist(2,function(res){
-						var uid = res[0];
-						db.set('accountid:'+user, uid, check2(function(){
-							// create role
-							var newRole = new Role();
-							newRole.newRole(uid);
-							db.multi()
-							.hmset('role:'+uid, newRole)
-							.hset('redeemowner', newRole.Redeem, uid)
-							.zadd('rolelv', 1, uid)	// add to level:1 set
-							.exec(check(function(){
-								addDefaultGirl(uid, sendnil);
-							}));
+				return;
+			}
+			db.sadd('usernames', user, check2err('user_exist',function(){
+				db.multi()
+				.incr('next_account_id')
+				.set('user:'+user, pass)
+				.exec(checklist(2,function(res){
+					var uid = res[0];
+					db.set('accountid:'+user, uid, check2(function(){
+						// create role
+						var newRole = new Role();
+						newRole.newRole(uid);
+						db.multi()
+						.hmset('role:'+uid, newRole)
+						.hset('redeemowner', newRole.Redeem, uid)
+						.zadd('rolelv', 1, uid)	// add to level:1 set
+						.exec(check(function(){
+							addDefaultGirl(uid, sendnil);
 						}));
 					}));
 				}));
-			}
+			}));
 			break;
 		case 'login':
 			//@cmd login
@@ -3903,7 +4024,7 @@ wss.broadcast = function broadcast(data) {
 wss.kick = function (uid) {
 	var ws = uid2ws[uid];
 	if (ws) {
-		ws.close();
+		ws.close(4001);
 		console.log('kick2');
 		removeWs(ws);
 	}

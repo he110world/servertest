@@ -21,6 +21,10 @@ function Const () {
 	this.SCORE_RANK_MAX = 5000;
 	this.CONTRIB_RANK_MAX = 30000;
 	this.INFINITE_MODE_TYPE = 6;
+
+	this.WS_DISCONNECT = 1000;
+	this.WS_QUIT = 4000;
+	this.WS_KICK = 4001;
 }
 
 //we need: 1. last login date 2. last gift id
