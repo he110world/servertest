@@ -57,6 +57,7 @@ tweet,{"cmd":"tweet";"session":{0}},beta版发推之后调用
 newusergift,{"cmd":"newusergift";"session":{0}},新手礼包
 view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：rolegirl room items girls friends pendingfriends follows team equip girlequip gift maps gamestate mission missionexpire handover（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 regUDID,{"cmd":"regUDID";"data":{"udid":{0};"machineID":{1}}},注册用户
+reconnect,{"cmd":"reconnect";"session":{0}},断线重连
 loginUDID,{"cmd":"loginUDID";"data":{"udid":{0}}},登录
 getHandOverUid,{"cmd":"getHandOverUid";"data":{"handid":{0};"handpass":{1}}},获取交接目标userId返回tmp:{handto:uid}
 handOverUDID,{"cmd":"handOverUDID";"data":{"newudid":{0};"handid":{1};"handpass":{2};"machineID":{3}}},账户交接
