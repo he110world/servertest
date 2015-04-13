@@ -45,6 +45,8 @@ sellequips,{"cmd":"sellequips";"data":{"equipidx":{0}};"session":{1}},卖掉装�
 addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
 getmissionrwd,{"cmd":"getmissionrwd";"data":{"id":{0}};"session":{1}},领取任务奖励
 getmaprwd,{"cmd":"getmaprwd";"data":{"id":{0};"bit":{1}};"session":{2}},领取地图任务奖励
+checktut,{"cmd":"checktut";"data":{"id":{0}};"session":{1}},教学关检查
+finishtut,{"cmd":"finishtut";"data":{"info":{0}};"session":{1}},教学关过关
 finishmap,{"cmd":"finishmap";"data":{"info":{0}};"session":{1}},地图过关（mapid:rank$count）
 BETA_buygirl,{"cmd":"BETA_buygirl";"data":{"item":{0}};"session":{1}},beta版扭蛋
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
