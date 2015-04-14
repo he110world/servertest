@@ -3756,19 +3756,19 @@ wss.on('connection', function(ws) {
 			break;
 		case 'help':
 			//@cmd help
-			//@cmd fid
-			//@cmd roomid
+			//@data fid
 			//@desc 多人好友求助
-			getuser(function(user, uid) {
-				try {
-					var fid = msg.data.uid;
-					var roomid = msg.data.roomid;
-				} catch (e) {
-					senderr('param_err');
-					return;
-				}
+			try {
+				var fid = msg.data.fid;
+			} catch (e) {
+				senderr('param_err');
+				return;
+			}
 
-				notifymsg(fid, {help:{uid:uid, roomid:roomid}});
+			getuser(function(user, uid) {
+				db.hget('role:'+uid, 'Room', check2(function(roomid){
+					notifymsg(fid, {help:{uid:uid, roomid:roomid}});
+				}));
 			});
 			break;
 		case 'view':
