@@ -11,7 +11,7 @@ function Const () {
 	this.PHOTON_ID = 12001;
 	this.CREDIT_ID = 12000;
 	this.GIRL_PRICE = 10;
-	this.SLOT_PRICE = 10;
+	this.SLOT_PRICE = 5;
 	this.MAX_SLOT = 400;
 	this.MAX_FRIENDS = 50;
 	this.MAX_ROOMS = 99999;
@@ -22,7 +22,7 @@ function Const () {
 	this.CONTRIB_RANK_MAX = 30000;
 	this.INFINITE_MODE_TYPE = 6;
 
-	this.WS_DISCONNECT = 1000;
+	this.WS_DISCONNECT = 1010;
 	this.WS_QUIT = 4000;
 	this.WS_KICK = 4001;
 }

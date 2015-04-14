@@ -294,6 +294,28 @@ function kickall (uid) {
 	publishData(pub, 'user', {cmd:'kickall', uid:uid});
 }
 
+function forceQuitRoom (uid,roomToQuit) {
+	db.hget('role:'+uid, 'Room', function(err,roomid){
+		if (roomid === null || (roomToQuit && roomToQuit!=roomid)) {
+			return;
+		}
+		db.hget('roominfo', roomid, function(err,roomstr){
+			var room = JSON.parse(roomstr);
+
+			db.multi()
+			.hdel('role:'+uid, 'Room')		// role:uid : {Room : null}
+			.lrem('room:'+roomid, 0, uid)	// room : delete [uid]
+			.llen('room:'+roomid)
+			.exec(function(err,data){
+				db.zadd('roomqueue', room.time, roomid);
+				if (data[2] > 0) {
+					roommsg(roomid, 'quit');
+				}
+			});
+		});
+	});
+}
+
 wss.on('connection', function(ws) {
 	ws.on('open', function() {
 	});
@@ -312,13 +334,24 @@ wss.on('connection', function(ws) {
 		db.hset('role:'+uid, 'LastTime', Date.now())
 
 		// handle session
-		if (code == Const.WS_DISCONNECT) {
+		if (code < Const.WS_DISCONNECT) {
 			console.log('%s disconnected', uid);
 
-			// going offline, tell others in the room
+			// go offline, tell others in the room
 			db.hget('role:'+uid, 'Room', function(err,roomid){
 				if (roomid) {
 					roommsg(roomid, 'off', {uid:uid});
+
+					// if doesn't reconnect in 1 minute, force quit the room
+					db.sadd('roomtimeout', uid, function(){
+						setTimeout(function(){
+							db.srem('roomtimeout', uid, function(err,timeout){
+								if (timeout > 0) {
+									forceQuitRoom(uid,roomid);
+								}
+							});
+						}, 60);
+					});
 				}
 			});
 
@@ -341,25 +374,7 @@ wss.on('connection', function(ws) {
 			});
 
 			// force quit room
-			db.hget('role:'+uid, 'Room', function(err,roomid){
-				if (roomid === null) {
-					return;
-				}
-				db.hget('roominfo', roomid, function(err,roomstr){
-					var room = JSON.parse(roomstr);
-
-					db.multi()
-					.hdel('role:'+uid, 'Room')		// role:uid : {Room : null}
-					.lrem('room:'+roomid, 0, uid)	// room : delete [uid]
-					.llen('room:'+roomid)
-					.exec(function(err,data){
-						db.zadd('roomqueue', room.time, roomid);
-						if (data[2] > 0) {
-							roommsg(roomid, 'quit');
-						}
-					});
-				});
-			});
+			forceQuitRoom(uid);
 		}
 	});
 
@@ -1080,6 +1095,23 @@ wss.on('connection', function(ws) {
 			});
 		}
 
+		function updateMapTut(trans, info, cb) {
+			mapid = info.mapId;
+
+			// map:uid {mapid:bitmap}
+			db.hget('map:'+trans.uid, mapid, check(function(mapmission){
+				var grade = 2;	//A
+				trans.client().set('grade', grade);
+				trans.hincrby('map', mapid+':cnt', 1, check(function(){	// incr map count
+					updateMapGameState(trans, info, function(){
+						trans.hset('map', mapid, 16, check(function(){	// 4<<2
+							cb();
+						}));
+					});
+				}));
+			}));
+		}
+
 		function updateMap(trans, info, cb) {
 			mapid = info.mapId;
 
@@ -1174,8 +1206,9 @@ wss.on('connection', function(ws) {
 			ids.forEach(function(id, i){
 				var girlcnt = girls[id];
 				for (var j=0; j<girlcnt; j++) {
+					var j2 = j;
 					addGirl(trans, id, 0, function(){
-						if (i==idcnt-1 && j==girlcnt-1) {
+						if (i==idcnt-1 && j2==girlcnt-1) {
 							cb();
 						}
 					});
@@ -1296,7 +1329,7 @@ wss.on('connection', function(ws) {
 
 				// Girl & Nickname
 				players.forEach(function(player, i){
-					db.hget('role:'+player.ID, 'nickname', check(function(nick){
+					db.hget('role:'+player.ID, 'Nick', check(function(nick){
 						db.lindex('team.1:'+player.ID, 0, check(function(girlid){
 							player.Nick = nick;
 							player.Girl = girlid;
@@ -1806,7 +1839,7 @@ wss.on('connection', function(ws) {
 				senderr('nick_null_err');
 			} else {
 				getuser(function(user, uid) {
-					db.hget('role:'+uid, 'nickname', check(function(oldnick){
+					db.hget('role:'+uid, 'Nick', check(function(oldnick){
 						if (newnick == oldnick) {
 							sendnil();
 						} else {
@@ -1817,7 +1850,7 @@ wss.on('connection', function(ws) {
 							}
 							multi
 							.sadd('nickuid:'+newnick, uid)	// add new
-							.hset('role:'+uid, 'nickname', newnick)	// tell role
+							.hset('role:'+uid, 'Nick', newnick)	// tell role
 							.exec(check(function(){
 								sendobj({role:{nickname:newnick}});
 							}));
@@ -1980,7 +2013,7 @@ wss.on('connection', function(ws) {
 				}
 
 				db.exists('role:'+target, check2(function(){
-					db.hmget('role:'+target, ['nickname', 'Lv'], checklist(2, function(data){
+					db.hmget('role:'+target, ['Nick', 'Lv'], checklist(2, function(data){
 						var obj = {Nick:data[0], Lv:data[1]};
 						sendtemp(obj);
 					}));
@@ -2218,7 +2251,7 @@ wss.on('connection', function(ws) {
 				var cnt = 0;
 				var obj = {friend:{}};
 				uids.forEach(function(fid, i){
-					db.hmget('role:'+fid, ['nickname', 'Lv', 'LastTime'], checklist(3, function(data){
+					db.hmget('role:'+fid, ['Nick', 'Lv', 'LastTime'], checklist(3, function(data){
 						db.lindex('team.1:'+fid, 0, check(function(girlid){
 							if (girlid === null) {
 								++cnt;
@@ -3191,6 +3224,147 @@ wss.on('connection', function(ws) {
 				});
 			});
 			break;
+		case 'checktut':
+			//@cmd checktut
+			//@data id
+			//@desc 教学关检查
+			getuser(function(user, uid){
+				try {
+					var id = msg.data.id;
+				} catch (e) {
+					senderr('tut_err');
+					return;
+				}
+
+				if (id == 1) {	// equip 13001
+					db.hlen('equip:'+uid, check(function(len){
+						if (len < 1) {
+							var trans = new Transaction(db, uid);
+							addEquip(trans, 13001, function(){
+								sendobj(trans.obj);
+							});
+						} else {
+							sendnil();
+						}
+					}));
+				} else if (id == 2) {	// girl 10001
+					db.exists('girl.10001'+':'+uid, check(function(exists){
+						if (!exists) {
+							var trans = new Transaction(db, uid);
+							addGirl(trans, 10001, 0, function(){
+								sendobj(trans.obj);
+							});
+						} else {
+							sendnil();
+						}
+					}));
+				} else if (id == 3) {	// equip 13003
+					db.hlen('equip:'+uid, check(function(len){
+						if (len < 2) {
+							var trans = new Transaction(db, uid);
+							addEquip(trans, 13003, function(){
+								sendobj(trans.obj);
+							});
+						} else {
+							sendnil();
+						}
+					}));
+				} else if (id == 4) {	// medal 12004 x 20
+					db.hget('item:'+uid, 12004, check(function(cnt){
+						if (cnt < 20) {
+							var trans = new Transaction(db, uid);
+							trans.hset('item', 12004, 20, check(function(){
+								sendobj(trans.obj);
+							}));
+						} else {
+							sendnil();
+						}
+					}));
+				} else {
+					sendnil();
+				}
+			});
+			break;
+		case 'finishtut':
+			//@cmd finishtut
+			//@data info
+			//@desc 教学关过关
+			getuser(function(user, uid){
+				try {
+					var info = msg.data.info;
+					var mapid = info.mapId;
+					var map = table.map[mapid];
+					var drop = info.getItem || {};
+
+					// add equip for tutorial maps 
+					if (mapid == 11001 || mapid == 11003) {
+						drop.equip = drop.equip || {};
+
+						if (mapid == 11001) {
+							drop.equip[13001] = 1;
+						} else {
+							drop.equip[13003] = 1;
+						}
+					}
+
+					// add girl 10001 for tutorial map 11002
+					if (mapid == 11002) {
+						drop.girl = drop.girl || {};
+						drop.girl[10001] = 1;
+					}
+
+					// add medal for tutorial maps
+					if (mapid >= 11000 && mapid <= 11003) {
+						drop.item = drop.item || {};
+						drop.item[12004] = 5;
+					}
+
+					var score = Math.floor(info.score);
+					var team = info.team;
+
+					console.log(info);
+
+					if (!map || isNaN(score) || team<1 || team>5) {
+						throw new Error();
+					}
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				var trans = new Transaction(db, uid);
+
+				useActiveItem(trans, map, drop.item, function(exp, item){
+
+					// add role exp			-- role
+					addRoleExp(trans, exp, function(){
+
+						// add girlexp			-- girl
+						addTeamExp(trans, team, exp, function(){
+
+							// drop items (including money)
+							addItems(trans, item, function(){
+
+								// drop equip
+								addEquips(trans, drop.equip, map.Lv, function() {
+
+									// drop girl
+									addGirls(trans, drop.girl, function() {
+
+										// map mission
+										updateMapTut(trans, info, function(){
+
+											// leader board
+											sendobj(trans.obj);
+										});
+									});
+								});
+							});
+						});
+					});
+				});
+			});
+			break;
 		case 'finishmap':
 			//@cmd finishmap
 			//@data info
@@ -3580,6 +3754,23 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
+		case 'help':
+			//@cmd help
+			//@cmd fid
+			//@cmd roomid
+			//@desc 多人好友求助
+			getuser(function(user, uid) {
+				try {
+					var fid = msg.data.uid;
+					var roomid = msg.data.roomid;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				notifymsg(fid, {help:{uid:uid, roomid:roomid}});
+			});
+			break;
 		case 'view':
 			//@cmd view
 			//@data name
@@ -3773,14 +3964,15 @@ wss.on('connection', function(ws) {
 			//@cmd reconnect
 			//@desc 断线重连
 			getuser(function(user, uid){
-				console.log('%s reconnect', uid);
-
+				db.srem('roomtimeout', uid);
 				db.persist('session:'+uid);
 				db.persist('sessionuser:'+msg.session);
 
 				uid2ws[uid] = ws;
 				ws2uid[ws] = uid;
 				sendnil();
+
+				console.log('%s reconnect', uid);
 			});
 			break;
 		case 'loginUDID':
@@ -3788,10 +3980,12 @@ wss.on('connection', function(ws) {
 			//@data udid
 			//@nosession
 			//@desc 登录
-			if (ws2uid[ws]) {
+			/*
+ 			if (ws2uid[ws]) {
 				senderr('already_loggedin_err');
 				return;
 			}
+			*/
 
 			try {
 				var udid = msg.data.udid;

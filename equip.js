@@ -2,15 +2,16 @@ var util = require('./util');
 
 function Equip (table, equipId, mapLevel) {
 	this.ID = equipId;
-	if (table.equip[equipId].ExtendAdd1) {	// not random
-		this.Rare = table.equip[equipId].Rare;
+	var tableEquip = table.equip[equipId];
+	if (tableEquip.ExtendAdd1) {	// not random
+		this.Rare = tableEquip.Rare;
 		for (var i=1; i<=3; i++) {
-			var ex = table.equip[equipId]['ExtendAdd'+i];
+			var ex = tableEquip['ExtendAdd'+i];
 			if (!ex) {
 				break;
 			}
 			this['ExtendAdd'+i] = ex;
-			this['AddValue'+i] = table.equip[equipId]['AddValue'+i];
+			this['AddValue'+i] = tableEquip['AddValue'+i];
 		}
 		return;
 	}
@@ -72,6 +73,7 @@ function Equip (table, equipId, mapLevel) {
 		rare = 5;
 	}
 	this.Rare = rare;
+	this.Type = tableEquip.Type;
 }
 
 module.exports = Equip;
