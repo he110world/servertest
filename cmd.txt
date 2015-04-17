@@ -48,6 +48,7 @@ getmaprwd,{"cmd":"getmaprwd";"data":{"id":{0};"bit":{1}};"session":{2}},领取�
 checktut,{"cmd":"checktut";"data":{"id":{0}};"session":{1}},教学关检查
 finishtut,{"cmd":"finishtut";"data":{"info":{0}};"session":{1}},教学关过关
 finishmap,{"cmd":"finishmap";"data":{"info":{0}};"session":{1}},地图过关（mapid:rank$count）
+reggirl,{"cmd":"reggirl";"data":{"id":{0}};"session":{1}},登记战机
 BETA_buygirl,{"cmd":"BETA_buygirl";"data":{"item":{0}};"session":{1}},beta版扭蛋
 buygirl,{"cmd":"buygirl";"data":{"item":{0}};"session":{1}},姬娘扭蛋（item格式为{id1:count...idN:count}）
 enterteam,{"cmd":"enterteam";"data":{"id":{0};"teamid":{1};"pos":{2}};"session":{3}},设置战姬所属编队(teamid:0-5;0=>no team)和位置(pos:0-3; index to array)
