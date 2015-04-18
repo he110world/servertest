@@ -43,8 +43,6 @@ Role.prototype.addExp = function (expInc) {
 	newExp = ret[1];
 	if (Lv != this.Lv) {
 		mod.Lv = Lv;
-		var dLv = Lv - this.Lv;
-		this.Cost += 0.5 * dLv;
 	}
 	mod.RoleExp = this.RoleExp = newExp;
 	this.Lv = Lv;

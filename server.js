@@ -442,7 +442,7 @@ wss.on('connection', function(ws) {
 		function checklist (len, cb) {
 			return function (err, data) {
 				if (err || !data || data.length!=len) {
-					console.log('list',err);
+					console.log('list',data);
 					responseErr(ws, msg.cmd, 'db_err', msg.id);
 				} else {
 					if (typeof cb == 'function') {
@@ -683,7 +683,7 @@ wss.on('connection', function(ws) {
 			var type = Math.floor(mission.ItemID/1000);
 			switch (type) {
 				case 10:	// girl
-					addGirl(trans, mission.ItemID, 0, cb);
+					addGirl(trans, mission.ItemID, -1, cb);
 					break;
 				case 12:	// item
 					addItem(trans, mission.ItemID, mission.ItemNum, cb);
@@ -1079,6 +1079,12 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
+		function getMaxCount(uid, key, cb) {
+			db.hget('role:'+uid, 'Lv', check(function(roleLv){
+				cb(table.exp[key][roleLv]);
+			}));
+		}
+
 		// update gamestate: kill/exboss/mp/sp
 		function updateMapGameState (trans, info, cb) {
 			incrGameState(trans, 5, info.kill, function(){
@@ -1196,7 +1202,7 @@ wss.on('connection', function(ws) {
 			}));
 		}
 
-		function addGirls(trans, girls, cb) {
+		function addGirls(trans, girls, price, cb) {
 			if (!girls) {
 				cb();
 				return;
@@ -1207,7 +1213,7 @@ wss.on('connection', function(ws) {
 				var girlcnt = girls[id];
 				for (var j=0; j<girlcnt; j++) {
 					var j2 = j;
-					addGirl(trans, id, 0, function(){
+					addGirl(trans, id, price, function(){
 						if (i==idcnt-1 && j2==girlcnt-1) {
 							cb();
 						}
@@ -1228,12 +1234,13 @@ wss.on('connection', function(ws) {
 					var rare = Math.floor(table.girl[girlid].Rare);
 					var samegiftid = Const.SAME_GIRL_GIFT(rare);
 					var multi = trans.multi();
-					if (price > 0) {	// buy
+					if (price >= 0) {	// buy
 						var buygift = new Gift(Const.BUY_GIRL_GIFT);
 
-						multi
-						.hincrby('item', Const.PHOTON_ID, -price)
-						.hsetjson('gift', index-1, buygift);
+						if (price > 0) {
+							multi.hincrby('item', Const.PHOTON_ID, -price);
+						}
+						multi.hsetjson('gift', index-1, buygift);
 					}
 					if (samegiftid) {
 						multi.hsetjson('gift', index, new Gift(samegiftid));	// already own this girl
@@ -1254,12 +1261,13 @@ wss.on('connection', function(ws) {
 					var girl = new Girl;
 					girl.newGirl(table, girlid);
 					var multi = trans.multi()
-					if (price > 0) {	// buy
+					if (price >= 0) {	// buy
 						var buygift = new Gift(Const.BUY_GIRL_GIFT);
 
-						multi
-						.hincrby('item', Const.PHOTON_ID, -price)
-						.hsetjson('gift', index, buygift);
+						if (price > 0) {
+							multi.hincrby('item', Const.PHOTON_ID, -price);
+						}
+						multi.hsetjson('gift', index, buygift);
 					}
 					multi
 					.sadd('girls', girlid)
@@ -1852,7 +1860,7 @@ wss.on('connection', function(ws) {
 							.sadd('nickuid:'+newnick, uid)	// add new
 							.hset('role:'+uid, 'Nick', newnick)	// tell role
 							.exec(check(function(){
-								sendobj({role:{nickname:newnick}});
+								sendobj({role:{Nick:newnick}});
 							}));
 						}
 					}));
@@ -2055,15 +2063,17 @@ wss.on('connection', function(ws) {
 						return;
 					}
 					db.scard('friends:'+target, check(function(cnt){
-						if (cnt >= Const.MAX_FRIENDS) {
-							senderr('friend_full_err');
-						} else {
-							var trans = new Transaction(db, target);
-							trans.sadd('pendingfriends', uid, check(function(){
-								sendnil();
-								sendto(target, trans.obj);
-							}));
-						}
+						getMaxCount(uid, 'Friend', function(maxfriends){
+							if (cnt >= maxfriends) {
+								senderr('friend_full_err');
+							} else {
+								var trans = new Transaction(db, target);
+								trans.sadd('pendingfriends', uid, check(function(){
+									sendnil();
+									sendto(target, trans.obj);
+								}));
+							}
+						});
 					}));
 				} catch (e) {
 					senderr('data_err:target');
@@ -2122,9 +2132,11 @@ wss.on('connection', function(ws) {
 					return;
 				}
 				db.scard('friends:'+target, check(function(cnt){
-					if (cnt >= Const.MAX_FRIENDS) {
-						senderr('friend_full_err');
-					} else {
+					getMaxCount(uid, 'Friend', function(maxfriends){
+						if (cnt >= Const.MAX_FRIENDS) {
+							senderr('friend_full_err');
+							return;
+						}
 						db.scard('friends:'+uid, check(function(mycnt){
 							var trans1 = new Transaction(db, uid);
 							trans1.multi()
@@ -2134,12 +2146,15 @@ wss.on('connection', function(ws) {
 								sendobj(trans1.obj);
 
 								var trans2 = new Transaction(db, target);
-								trans2.sadd('friends', uid, check(function(){
+								trans2.multi()
+								.srem('pendingfriends', uid)
+								.sadd('friends', uid)
+								.exec(check(function(){
 									sendto(target, trans2.obj);
 								}));
 							}));
 						}));
-					}
+					});
 				}));
 			});
 			break;
@@ -2355,7 +2370,7 @@ wss.on('connection', function(ws) {
 										}
 									}));
 								} else if (type == 'girl') {
-									addGirl(trans, id);
+									addGirl(trans, id, -1);
 								} else {
 									// invalid gift
 									sendobj(trans.obj);
@@ -2667,7 +2682,7 @@ wss.on('connection', function(ws) {
 									break;
 								case 11:	// add four star girl
 									var girl = new Girl();
-									addGirl(trans, girl.fourStars(table));
+									addGirl(trans, girl.fourStars(table), -1);
 									break;
 								default:
 									sendobj(trans.obj);
@@ -2935,35 +2950,33 @@ wss.on('connection', function(ws) {
 						// team -- array
 						// remove old, add new
 						var updateTeam = function (t, maxcost, cb) {
-							db.hget('role:'+uid, 'Cost', check(function(maxcost){
-								var gid = girlid.toString();
-								var teamkey = 'team.'+t+':'+uid;
-								db.lrange(teamkey, 0, -1, check2(function(team){
-									var idx = team.indexOf(gid);
-									if (idx != -1) {
-										team[idx] = newid;
-										if (teamCost(team) > maxcost) {	// > max cost, remove from team
-											delete team[idx];
-											db.lrem(teamkey, 0, girlid, check(function(){
-												trans.client().set('team.'+t, team);
-												cb();
-											}));
-										} else {	// change old id to new id
-											db.lset(teamkey, idx, newid, check(function(){
-												trans.client().set('team.'+t, team);
-												cb();
-											}));
-										}
-									} else {
-										cb();
+							var gid = girlid.toString();
+							var teamkey = 'team.'+t+':'+uid;
+							db.lrange(teamkey, 0, -1, check2(function(team){
+								var idx = team.indexOf(gid);
+								if (idx != -1) {
+									team[idx] = newid;
+									if (teamCost(team) > maxcost) {	// > max cost, remove from team
+										delete team[idx];
+										db.lrem(teamkey, 0, girlid, check(function(){
+											trans.client().set('team.'+t, team);
+											cb();
+										}));
+									} else {	// change old id to new id
+										db.lset(teamkey, idx, newid, check(function(){
+											trans.client().set('team.'+t, team);
+											cb();
+										}));
 									}
-								}));
+								} else {
+									cb();
+								}
 							}));
 						}
 
 						// do the update
 						updateGirlEquips(function(){
-							db.hget('role:'+uid, 'Cost', check(function(maxcost){
+							getMaxCount(uid, 'Cost', function(maxcost){
 								updateTeam(1, maxcost, function(){
 									updateTeam(2, maxcost, function(){
 										updateTeam(3, maxcost, function(){
@@ -2983,7 +2996,7 @@ wss.on('connection', function(ws) {
 										});
 									});
 								});
-							}));
+							});
 						});
 					}));
 				}));
@@ -3052,6 +3065,34 @@ wss.on('connection', function(ws) {
 						}));
 					} else {
 						sendnil();
+					}
+				}));
+			});
+			break;
+		case 'lockequip':
+			//@cmd lockequip
+			//@data idx
+			//@data lock
+			//@desc 装备保护(lock=0 or 1)
+			getuser(function(user, uid){
+				try {
+					var idx = msg.data.idx;
+					var lock = msg.data.lock;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
+
+				db.hexists('equip:'+uid, idx, check2(function(){
+					var trans = new Transaction(db, uid);
+					if (lock) {
+						trans.sadd('lockequip', idx, check(function(){
+							sendobj(trans.obj);
+						}));
+					} else {
+						trans.srem('lockequip', idx, check(function(){
+							sendobj(trans.obj);
+						}));
 					}
 				}));
 			});
@@ -3251,7 +3292,7 @@ wss.on('connection', function(ws) {
 					db.exists('girl.10001'+':'+uid, check(function(exists){
 						if (!exists) {
 							var trans = new Transaction(db, uid);
-							addGirl(trans, 10001, 0, function(){
+							addGirl(trans, 10001, -1, function(){
 								sendobj(trans.obj);
 							});
 						} else {
@@ -3349,7 +3390,7 @@ wss.on('connection', function(ws) {
 								addEquips(trans, drop.equip, map.Lv, function() {
 
 									// drop girl
-									addGirls(trans, drop.girl, function() {
+									addGirls(trans, drop.girl, -1, function() {
 
 										// map mission
 										updateMapTut(trans, info, function(){
@@ -3403,7 +3444,7 @@ wss.on('connection', function(ws) {
 								addEquips(trans, drop.equip, map.Lv, function() {
 
 									// drop girl
-									addGirls(trans, drop.girl, function() {
+									addGirls(trans, drop.girl, -1, function() {
 
 										// map mission
 										updateMap(trans, info, function(){
@@ -3426,7 +3467,26 @@ wss.on('connection', function(ws) {
 				});
 			});
 			break;
+		case 'reggirl':
+			//@cmd reggirl
+			//@data id
+			//@desc 登记战机
+			getuser(function(user, uid){
+				try {
+					var girlid = msg.data.id;
+				} catch (e) {
+					senderr('param_err');
+					return;
+				}
 
+				db.sismember('girls:'+uid, girlid, check2(function(exist){
+					var trans = new Transaction(db, uid);
+					trans.hset('role', 'RegGirl', girlid, check(function(){
+						sendobj(trans.obj);
+					}));
+				}));
+			});
+			break;
 		case 'BETA_buygirl':
 			//@cmd BETA_buygirl
 			//@data item
@@ -3575,7 +3635,7 @@ wss.on('connection', function(ws) {
 							}));
 						}
 					} else {
-						db.hget('role:'+uid, 'Cost', check2(function(maxcost){
+						getMaxCount(uid, 'Cost', function(maxcost){
 							if (pos >= team.length) {	//append 
 								team.push(g);
 
@@ -3599,7 +3659,7 @@ wss.on('connection', function(ws) {
 									}));
 								}
 							}
-						}));
+						});
 					}
 				}));
 			});
@@ -3724,7 +3784,7 @@ wss.on('connection', function(ws) {
 			//@cmd postmsg
 			//@desc 提交意见确认
 			getuser(function(user, uid){
-				db.hincrby('betainfo:'+uid, msg, 1, check(function(){
+				db.hincrby('betainfo:'+uid, 'proposal', 1, check(function(){
 					sendnil();
 				}));
 			});
@@ -3766,8 +3826,19 @@ wss.on('connection', function(ws) {
 			}
 
 			getuser(function(user, uid) {
-				db.hget('role:'+uid, 'Room', check2(function(roomid){
-					notifymsg(fid, {help:{uid:uid, roomid:roomid}});
+				db.hmget('role:'+uid, ['Room','Nick'], checklist(2,function(roomid_nick){
+					var roomid = roomid_nick[0];
+					if (!roomid) {
+						senderr('room_err');
+						return;
+					}
+					sendnil();
+
+					db.hget('roominfo', roomid, check2(function(roomstr){
+						var roominfo = JSON.parse(roomstr);
+						var help = {id:roomid, mapid:roominfo.mapid, Nick:roomid_nick[1]};
+						notifymsg(fid, {help:help});
+					}));
 				}));
 			});
 			break;
@@ -3868,6 +3939,11 @@ wss.on('connection', function(ws) {
 						break;
 					case 'girlequip':
 						trans.hgetall('girlequip', check(function(){
+							sendobj(trans.obj);
+						}));
+						break;
+					case 'lockequip':
+						trans.smembers('lockequip', check(function(){
 							sendobj(trans.obj);
 						}));
 						break;
