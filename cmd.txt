@@ -41,6 +41,7 @@ sellitem,{"cmd":"sellitem";"data":{"itemid":{0};"count":{1}};"session":{2}},卖�
 buyitem,{"cmd":"buyitem";"data":{"shopid":{0}};"session":{1}},买物品
 evolvegirl,{"cmd":"evolvegirl";"data":{"girlid":{0}};"session":{1}},战姬进化
 setequip,{"cmd":"setequip";"data":{"girlid":{0};"equipidx":{1};"pos":{2}};"session":{3}},战姬穿装备(e.g.setequip 130001 20 3)
+lockequip,{"cmd":"lockequip";"data":{"idx":{0};"lock":{1}};"session":{2}},装备保护(lock=0or 1)
 sellequips,{"cmd":"sellequips";"data":{"equipidx":{0}};"session":{1}},卖掉装备（参数：装备index数组）
 addslot,{"cmd":"addslot";"data":{"cnt":{0}};"session":{1}},增加装备格子
 getmissionrwd,{"cmd":"getmissionrwd";"data":{"id":{0}};"session":{1}},领取任务奖励
