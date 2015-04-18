@@ -60,6 +60,7 @@ postmsg,{"cmd":"postmsg";"session":{0}},提交意见确认
 tweet,{"cmd":"tweet";"session":{0}},beta版发推之后调用
 newusergift,{"cmd":"newusergift";"session":{0}},新手礼包
 help,{"cmd":"help";"data":{"fid":{0}};"session":{1}},多人好友求助
+totaltweets,{"cmd":"totaltweets";"session":{0}},获取推的总数
 view,{"cmd":"view";"data":{"name":{0};"id":{1}};"session":{2}},查看数据：rolegirl room items girls friends pendingfriends follows team equip girlequip gift maps gamestate mission missionexpire handover（girl/team/equip需要用到id; gift返回的是所有的gift:{id:{ID Time}}; girlequip:{index : girlId:pos ，girlId:pos : index）; maps : {mapid : "rank:count"}
 regUDID,{"cmd":"regUDID";"data":{"udid":{0};"machineID":{1}}},注册用户
 reconnect,{"cmd":"reconnect";"session":{0}},断线重连

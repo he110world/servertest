@@ -3799,6 +3799,7 @@ wss.on('connection', function(ws) {
 				.hset('betainfo', 'recruit', 0)
 				.exec(check(function(){
 					sendobj(trans.obj);
+					db.incr('totaltweets');
 				}));
 			});
 			break;
@@ -3839,6 +3840,18 @@ wss.on('connection', function(ws) {
 						var help = {id:roomid, mapid:roominfo.mapid, Nick:roomid_nick[1]};
 						notifymsg(fid, {help:help});
 					}));
+				}));
+			});
+			break;
+		case 'totaltweets':
+			//@cmd totaltweets
+			//@desc 获取推的总数
+			getuser(function(user, uid){
+				db.get('totaltweets', check(function(cnt){
+					if (cnt === null) {
+						cnt = 0;
+					}
+					sendtemp({totaltweets:cnt});
 				}));
 			});
 			break;
