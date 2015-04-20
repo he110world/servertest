@@ -11,7 +11,7 @@ function Const () {
 	this.PHOTON_ID = 12001;
 	this.CREDIT_ID = 12000;
 	this.GIRL_PRICE = 10;
-	this.SLOT_PRICE = 5;
+	this.SLOT_PRICE = 1;
 	this.MAX_SLOT = 400;
 	this.MAX_FRIENDS = 50;
 	this.MAX_ROOMS = 99999;

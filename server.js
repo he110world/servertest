@@ -1570,10 +1570,10 @@ wss.on('connection', function(ws) {
 								setGameState(trans, 10, newrank, false, function(){
 									if (Object.keys(mod).length > 0) {	// update personal max
 										trans.hmset('role.board', mod, check(function(){
-											cb();
+											cb(newrank);
 										}));
 									} else {
-										cb();
+										cb(newrank);
 									}
 								});
 							}));
@@ -3451,7 +3451,8 @@ wss.on('connection', function(ws) {
 
 											// leader board
 											if (map.Type == Const.INFINITE_MODE_TYPE) {
-												updateBoard(trans, score, function(){
+												updateBoard(trans, score, function(newrank){
+													trans.client().set('TempRank', newrank);
 													sendobj(trans.obj);
 												});
 											} else {	// normal mode
@@ -3561,6 +3562,7 @@ wss.on('connection', function(ws) {
 
 							trans.hmset('item', itemcounts, check(function(){
 								try {
+									db.incr('totalrecruit');
 									addGirl(trans, buygirl(), cost);
 								} catch (e) {
 									senderr('buygirl_err');
@@ -3569,6 +3571,7 @@ wss.on('connection', function(ws) {
 						}));
 					} else {
 						try {
+							db.incr('totalrecruit');
 							addGirl(trans, buygirl(), cost);
 						} catch (e) {
 							senderr('buygirl_err');
@@ -3799,7 +3802,6 @@ wss.on('connection', function(ws) {
 				.hset('betainfo', 'recruit', 0)
 				.exec(check(function(){
 					sendobj(trans.obj);
-					db.incr('totaltweets');
 				}));
 			});
 			break;
@@ -3843,15 +3845,15 @@ wss.on('connection', function(ws) {
 				}));
 			});
 			break;
-		case 'totaltweets':
-			//@cmd totaltweets
-			//@desc 获取推的总数
+		case 'totalrecruit':
+			//@cmd totalrecruit
+			//@desc 获取扭蛋总数
 			getuser(function(user, uid){
-				db.get('totaltweets', check(function(cnt){
+				db.get('totalrecruit', check(function(cnt){
 					if (cnt === null) {
 						cnt = 0;
 					}
-					sendtemp({totaltweets:cnt});
+					sendtemp({totalrecruit:cnt});
 				}));
 			});
 			break;
@@ -3872,8 +3874,9 @@ wss.on('connection', function(ws) {
 				switch (viewname) {
 					case 'betainfo':	// BETA: free recruit count
 						trans.hgetall('betainfo', check(function(betainfo){
-							if (betainfo === null) {	// no beta info yet
-								betainfo = {recruit:0, twitter:0};
+							var date = moment().format('YYYYMMDD');
+							if (betainfo === null || date != betainfo.date) {	// no beta info yet
+								betainfo = {recruit:0, twitter:0, date:date};
 								trans.hmset('betainfo', betainfo, check(function(){
 									sendobj(trans.obj);
 								}));
@@ -4024,6 +4027,8 @@ wss.on('connection', function(ws) {
 			}
 			db.sadd('udids', udid, check2err('udid_exist',function(){
 				db.incr('next_account_id', check(function(uid){
+					uid = Math.floor(uid) + 1000000000;
+
 					// create role
 					var newRole = new Role();
 					newRole.newRole(uid);
@@ -4154,7 +4159,7 @@ wss.on('connection', function(ws) {
 			doHandOver(handid, handpass, function(oldudid, uid){
 				db.hget('uid2machine', uid, check2(function(oldMachineID){
 					db.multi()
-					.hset('handover2uid', handid, udid+':'+uid)
+					.hset('handover2uid', handid, udid+'$'+uid)
 					.srem('udids', oldudid)
 					.sadd('udids', udid)
 					.set('accountid:'+udid, uid)
